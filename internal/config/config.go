@@ -15,10 +15,10 @@ import (
 const (
 	EnvPort                     = "PORT"
 	EnvAllowedRepositories      = "BROKER_ALLOWED_REPOSITORIES"
-	EnvGitHubAppID              = "GITHUB_APP_ID"
-	EnvGitHubInstallationID     = "GITHUB_APP_INSTALLATION_ID"
-	EnvGitHubPrivateKeyPath     = "GITHUB_APP_PRIVATE_KEY_PATH"
-	EnvGitHubAPIBaseURL         = "GITHUB_API_BASE_URL"
+	EnvBrokerAppID              = "BROKER_APP_ID"
+	EnvBrokerInstallationID     = "BROKER_APP_INSTALLATION_ID"
+	EnvBrokerPrivateKeyPath     = "BROKER_PRIVATE_KEY_PATH"
+	EnvBrokerAPIBaseURL         = "BROKER_API_BASE_URL"
 	EnvRequestTimeout           = "BROKER_REQUEST_TIMEOUT"
 	EnvMaxRequestBytes          = "BROKER_MAX_REQUEST_BYTES"
 	EnvMinimumTokenLifetime     = "BROKER_MIN_TOKEN_LIFETIME"
@@ -65,21 +65,21 @@ func load(getenv func(string) string) (Config, error) {
 		return Config{}, err
 	}
 
-	appID, err := positiveIntegerValue(EnvGitHubAppID, getenv(EnvGitHubAppID))
+	appID, err := positiveIntegerValue(EnvBrokerAppID, getenv(EnvBrokerAppID))
 	if err != nil {
 		return Config{}, err
 	}
-	installationID, err := positiveIntegerValue(EnvGitHubInstallationID, getenv(EnvGitHubInstallationID))
+	installationID, err := positiveIntegerValue(EnvBrokerInstallationID, getenv(EnvBrokerInstallationID))
 	if err != nil {
 		return Config{}, err
 	}
 
-	privateKeyPath := strings.TrimSpace(getenv(EnvGitHubPrivateKeyPath))
+	privateKeyPath := strings.TrimSpace(getenv(EnvBrokerPrivateKeyPath))
 	if privateKeyPath == "" {
-		return Config{}, requiredValueError(EnvGitHubPrivateKeyPath)
+		return Config{}, requiredValueError(EnvBrokerPrivateKeyPath)
 	}
 
-	apiBaseURL, err := httpsURLValue(EnvGitHubAPIBaseURL, getenv(EnvGitHubAPIBaseURL), defaultGitHubAPIBaseURL)
+	apiBaseURL, err := httpsURLValue(EnvBrokerAPIBaseURL, getenv(EnvBrokerAPIBaseURL), defaultGitHubAPIBaseURL)
 	if err != nil {
 		return Config{}, err
 	}

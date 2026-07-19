@@ -38,13 +38,13 @@ developer workstation, or written to logs.
 
 - `BROKER_ALLOWED_REPOSITORIES` is required and contains a comma-separated
   `host/owner/repository` allowlist.
-- `GITHUB_APP_ID` is required and contains the numeric GitHub App ID.
-- `GITHUB_APP_INSTALLATION_ID` is required and contains the numeric approved
+- `BROKER_APP_ID` is required and contains the numeric GitHub App ID.
+- `BROKER_APP_INSTALLATION_ID` is required and contains the numeric approved
   repository installation ID.
-- `GITHUB_APP_PRIVATE_KEY_PATH` is required and contains the mounted PEM file
+- `BROKER_PRIVATE_KEY_PATH` is required and contains the mounted PEM file
   path.
 - `PORT` is optional and defaults to `8080`.
-- `GITHUB_API_BASE_URL` is optional, must use HTTPS, and defaults to
+- `BROKER_API_BASE_URL` is optional, must use HTTPS, and defaults to
   `https://api.github.com`.
 - `BROKER_REQUEST_TIMEOUT` is optional and defaults to `10s`.
 - `BROKER_MAX_REQUEST_BYTES` is optional and defaults to `4096`.
