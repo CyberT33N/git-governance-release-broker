@@ -132,16 +132,16 @@ func TestRunValidatesAndHandlesServerOutcomes(t *testing.T) {
 
 func TestBuildHandler(t *testing.T) {
 	t.Setenv(config.EnvAllowedRepositories, "github.com/CyberT33N/git-governance")
-	t.Setenv(config.EnvGitHubAppID, "1")
-	t.Setenv(config.EnvGitHubInstallationID, "2")
-	t.Setenv(config.EnvGitHubAPIBaseURL, "https://api.github.com")
+	t.Setenv(config.EnvBrokerAppID, "1")
+	t.Setenv(config.EnvBrokerInstallationID, "2")
+	t.Setenv(config.EnvBrokerAPIBaseURL, "https://api.github.com")
 	t.Setenv(config.EnvPort, "8080")
 	t.Setenv(config.EnvRequestTimeout, "1s")
 	t.Setenv(config.EnvMaxRequestBytes, "128")
 	t.Setenv(config.EnvMinimumTokenLifetime, "1m")
 
 	keyPath := writePrivateKey(t)
-	t.Setenv(config.EnvGitHubPrivateKeyPath, keyPath)
+	t.Setenv(config.EnvBrokerPrivateKeyPath, keyPath)
 	handler, address, err := buildHandler(slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
 		t.Fatalf("buildHandler() error = %v", err)
@@ -150,24 +150,24 @@ func TestBuildHandler(t *testing.T) {
 		t.Fatalf("buildHandler() = %T, %q", handler, address)
 	}
 
-	t.Setenv(config.EnvGitHubAppID, "")
+	t.Setenv(config.EnvBrokerAppID, "")
 	if _, _, err := buildHandler(nil); err == nil {
 		t.Fatal("buildHandler(config error) = nil")
 	}
 
-	t.Setenv(config.EnvGitHubAppID, "1")
-	t.Setenv(config.EnvGitHubPrivateKeyPath, "missing")
+	t.Setenv(config.EnvBrokerAppID, "1")
+	t.Setenv(config.EnvBrokerPrivateKeyPath, "missing")
 	if _, _, err := buildHandler(nil); err == nil {
 		t.Fatal("buildHandler(read error) = nil")
 	}
 
 	invalidPath := writeFile(t, []byte("invalid"))
-	t.Setenv(config.EnvGitHubPrivateKeyPath, invalidPath)
+	t.Setenv(config.EnvBrokerPrivateKeyPath, invalidPath)
 	if _, _, err := buildHandler(nil); err == nil {
 		t.Fatal("buildHandler(parse error) = nil")
 	}
 
-	t.Setenv(config.EnvGitHubPrivateKeyPath, keyPath)
+	t.Setenv(config.EnvBrokerPrivateKeyPath, keyPath)
 	originalFactory := newGitHubClient
 	defer func() { newGitHubClient = originalFactory }()
 	newGitHubClient = func(string, string, *rsa.PrivateKey, string, *http.Client, func() time.Time) (*githubapp.Client, error) {
@@ -200,13 +200,13 @@ func TestNewHTTPServer(t *testing.T) {
 
 func TestRunUsesDefaultLogger(t *testing.T) {
 	t.Setenv(config.EnvAllowedRepositories, "github.com/CyberT33N/git-governance")
-	t.Setenv(config.EnvGitHubAppID, "1")
-	t.Setenv(config.EnvGitHubInstallationID, "2")
-	t.Setenv(config.EnvGitHubAPIBaseURL, "https://api.github.com")
+	t.Setenv(config.EnvBrokerAppID, "1")
+	t.Setenv(config.EnvBrokerInstallationID, "2")
+	t.Setenv(config.EnvBrokerAPIBaseURL, "https://api.github.com")
 	t.Setenv(config.EnvRequestTimeout, "1s")
 	t.Setenv(config.EnvMaxRequestBytes, "128")
 	t.Setenv(config.EnvMinimumTokenLifetime, "1m")
-	t.Setenv(config.EnvGitHubPrivateKeyPath, writePrivateKey(t))
+	t.Setenv(config.EnvBrokerPrivateKeyPath, writePrivateKey(t))
 
 	port := freePort(t)
 	t.Setenv(config.EnvPort, port)

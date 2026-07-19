@@ -8,11 +8,11 @@ import (
 
 func TestLoadUsesConfiguredAndDefaultValues(t *testing.T) {
 	t.Setenv(EnvAllowedRepositories, "github.com/CyberT33N/git-governance,github.example/acme/release")
-	t.Setenv(EnvGitHubAppID, "42")
-	t.Setenv(EnvGitHubInstallationID, "99")
-	t.Setenv(EnvGitHubPrivateKeyPath, "/var/run/key.pem")
+	t.Setenv(EnvBrokerAppID, "42")
+	t.Setenv(EnvBrokerInstallationID, "99")
+	t.Setenv(EnvBrokerPrivateKeyPath, "/var/run/key.pem")
 	t.Setenv(EnvPort, "")
-	t.Setenv(EnvGitHubAPIBaseURL, "")
+	t.Setenv(EnvBrokerAPIBaseURL, "")
 	t.Setenv(EnvRequestTimeout, "")
 	t.Setenv(EnvMaxRequestBytes, "")
 	t.Setenv(EnvMinimumTokenLifetime, "")
@@ -45,18 +45,18 @@ func TestLoadUsesConfiguredAndDefaultValues(t *testing.T) {
 func TestLoadRejectsInvalidValues(t *testing.T) {
 	valid := map[string]string{
 		EnvAllowedRepositories:  "github.com/CyberT33N/git-governance",
-		EnvGitHubAppID:          "1",
-		EnvGitHubInstallationID: "2",
-		EnvGitHubPrivateKeyPath: "/key.pem",
+		EnvBrokerAppID:          "1",
+		EnvBrokerInstallationID: "2",
+		EnvBrokerPrivateKeyPath: "/key.pem",
 	}
 
 	for name, value := range map[string]string{
 		EnvPort:                 "70000",
 		EnvAllowedRepositories:  "invalid",
-		EnvGitHubAppID:          "0",
-		EnvGitHubInstallationID: "-1",
-		EnvGitHubPrivateKeyPath: " ",
-		EnvGitHubAPIBaseURL:     "http://api.github.com",
+		EnvBrokerAppID:          "0",
+		EnvBrokerInstallationID: "-1",
+		EnvBrokerPrivateKeyPath: " ",
+		EnvBrokerAPIBaseURL:     "http://api.github.com",
 		EnvRequestTimeout:       "-1s",
 		EnvMaxRequestBytes:      "0",
 		EnvMinimumTokenLifetime: "nonsense",
@@ -73,9 +73,9 @@ func TestLoadRejectsInvalidValues(t *testing.T) {
 
 	for _, name := range []string{
 		EnvAllowedRepositories,
-		EnvGitHubAppID,
-		EnvGitHubInstallationID,
-		EnvGitHubPrivateKeyPath,
+		EnvBrokerAppID,
+		EnvBrokerInstallationID,
+		EnvBrokerPrivateKeyPath,
 	} {
 		t.Run("missing "+name, func(t *testing.T) {
 			environment := cloneEnvironment(valid)

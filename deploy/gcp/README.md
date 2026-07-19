@@ -37,8 +37,8 @@ identifiers, not secrets:
   resource name.
 - `GCP_DEPLOYER_SERVICE_ACCOUNT`: `broker-deployer` service-account email.
 - `GCP_SDK_VERSION`: an explicitly approved Google Cloud SDK version.
-- `GITHUB_RELEASE_APP_ID`: the numeric release GitHub App ID.
-- `GITHUB_RELEASE_APP_INSTALLATION_ID`: the numeric installation ID.
+- `RELEASE_APP_ID`: the numeric release GitHub App ID.
+- `RELEASE_APP_INSTALLATION_ID`: the numeric installation ID.
 - `BROKER_ALLOWED_REPOSITORIES`: the exact comma-separated allowlist, for
   example `github.com/CyberT33N/git-governance`.
 
@@ -74,3 +74,9 @@ Cloud Run receives `--no-allow-unauthenticated`, one maximum instance for the
 test environment, and a zero minimum-instance count. The service is reachable
 over HTTPS only after Cloud Run IAM validates an ID token from the approved
 invoker identity.
+
+GitHub Actions reserves the `GITHUB_` prefix for its own configuration
+variables. The deployment workflow therefore reads `RELEASE_APP_ID` and
+`RELEASE_APP_INSTALLATION_ID`, then passes their values to Cloud Run as the
+broker runtime variables `BROKER_APP_ID` and
+`BROKER_APP_INSTALLATION_ID`.
