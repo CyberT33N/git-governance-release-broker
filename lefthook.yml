@@ -1,0 +1,7 @@
+pre-push:
+  parallel: false
+  commands:
+    unit-tests:
+      run: go test ./...
+    complete-coverage:
+      run: go run ./cmd/check-coverage
