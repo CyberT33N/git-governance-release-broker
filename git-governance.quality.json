@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 2,
+  "defaults": {
+    "includeFamilies": [
+      "feature",
+      "fix",
+      "docs",
+      "refactor",
+      "chore",
+      "test",
+      "perf",
+      "hotfix"
+    ]
+  },
+  "gates": [
+    {
+      "name": "go-tests",
+      "command": "go",
+      "args": [
+        "test",
+        "./..."
+      ],
+      "timeout": "5m"
+    },
+    {
+      "name": "go-complete-coverage",
+      "command": "go",
+      "args": [
+        "run",
+        "./cmd/check-coverage"
+      ],
+      "timeout": "5m"
+    }
+  ]
+}

@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+      - "feature/**"
+      - "fix/**"
+      - "docs/**"
+      - "refactor/**"
+      - "chore/**"
+      - "test/**"
+      - "perf/**"
+  pull_request:
+    branches:
+      - develop
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Go verification
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out source
+        uses: actions/checkout@9f698171ed81b15d1823a05fc7211befd50c8ae0 # v6.0.3
+
+      - name: Set up Go
+        uses: actions/setup-go@8cba2cfe36682d005f637cac7395ac358ad3da09 # v6.5.0
+        with:
+          go-version-file: go.mod
+          check-latest: true
+
+      - name: Run unit tests
+        run: go test ./...
+
+      - name: Enforce complete statement coverage
+        run: go run ./cmd/check-coverage
