@@ -66,6 +66,17 @@ go run ./cmd/check-coverage
 docker build --tag git-governance-release-broker:dev .
 ```
 
+## GCP deployment
+
+The reviewed `develop` branch contains a manual, OIDC-authenticated deployment
+workflow at `.github/workflows/gcp-deploy.yml`. It first bootstraps the Docker
+Artifact Registry repository and then builds an immutable image digest before
+deploying the private Cloud Run service.
+
+Deployment identity setup, required non-secret GitHub variables, and the exact
+runtime IAM boundary are documented in
+[`deploy/gcp/README.md`](deploy/gcp/README.md).
+
 For Cloud Run, deploy a pinned image digest with:
 
 - Cloud Run IAM authentication required;
