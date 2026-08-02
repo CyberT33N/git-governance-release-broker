@@ -28,6 +28,15 @@ const (
 	maxGitHubBodyBytes = 8 * 1024
 )
 
+// CredentialProfile fixes the maximum GitHub permissions requested by a broker
+// deployment. It is never accepted from the token request.
+type CredentialProfile string
+
+const (
+	CredentialProfileReleaseAutomation       CredentialProfile = "release-automation"
+	CredentialProfileReconciliationPublisher CredentialProfile = "reconciliation-publisher"
+)
+
 var (
 	marshalJSON            = json.Marshal
 	randomReader io.Reader = rand.Reader
@@ -50,6 +59,7 @@ type Issuer interface {
 type Client struct {
 	appID          string
 	installationID string
+	profile        CredentialProfile
 	privateKey     *rsa.PrivateKey
 	apiBaseURL     *url.URL
 	httpClient     *http.Client
@@ -67,9 +77,13 @@ type tokenResponse struct {
 }
 
 // NewClient constructs an issuer for exactly one GitHub App installation.
-func NewClient(appID, installationID string, privateKey *rsa.PrivateKey, apiBaseURL string, httpClient *http.Client, now func() time.Time) (*Client, error) {
+func NewClient(appID, installationID string, profile CredentialProfile, privateKey *rsa.PrivateKey, apiBaseURL string, httpClient *http.Client, now func() time.Time) (*Client, error) {
 	if strings.TrimSpace(appID) == "" || strings.TrimSpace(installationID) == "" {
 		return nil, errors.New("GitHub App ID and installation ID must be configured")
+	}
+	parsedProfile, err := ParseCredentialProfile(string(profile))
+	if err != nil {
+		return nil, err
 	}
 	if privateKey == nil {
 		return nil, errors.New("GitHub App private key must be configured")
@@ -87,6 +101,7 @@ func NewClient(appID, installationID string, privateKey *rsa.PrivateKey, apiBase
 	return &Client{
 		appID:          strings.TrimSpace(appID),
 		installationID: strings.TrimSpace(installationID),
+		profile:        parsedProfile,
 		privateKey:     privateKey,
 		apiBaseURL:     parsedBaseURL,
 		httpClient:     httpClient,
@@ -114,6 +129,18 @@ func LoadPrivateKey(contents []byte) (*rsa.PrivateKey, error) {
 	return privateKey, nil
 }
 
+// ParseCredentialProfile validates the fixed server-side GitHub permission profile.
+func ParseCredentialProfile(value string) (CredentialProfile, error) {
+	switch CredentialProfile(strings.TrimSpace(value)) {
+	case "", CredentialProfileReleaseAutomation:
+		return CredentialProfileReleaseAutomation, nil
+	case CredentialProfileReconciliationPublisher:
+		return CredentialProfileReconciliationPublisher, nil
+	default:
+		return "", fmt.Errorf("unsupported GitHub credential profile %q", value)
+	}
+}
+
 // Mint creates an installation token restricted to the requested repository.
 func (client *Client) Mint(ctx context.Context, repository string) (Token, error) {
 	if ctx == nil {
@@ -128,13 +155,13 @@ func (client *Client) Mint(ctx context.Context, repository string) (Token, error
 	if err != nil {
 		return Token{}, err
 	}
+	permissions, err := client.installationTokenPermissions()
+	if err != nil {
+		return Token{}, err
+	}
 	body, err := marshalJSON(tokenRequest{
 		Repositories: []string{repository},
-		Permissions: map[string]string{
-			"actions":       "write",
-			"contents":      "read",
-			"pull_requests": "write",
-		},
+		Permissions:  permissions,
 	})
 	if err != nil {
 		return Token{}, fmt.Errorf("encode installation-token request: %w", err)
@@ -169,6 +196,24 @@ func (client *Client) Mint(ctx context.Context, repository string) (Token, error
 		return Token{}, errors.New("GitHub returned an invalid installation token")
 	}
 	return Token{Value: issued.Token, ExpiresAt: issued.ExpiresAt.UTC()}, nil
+}
+
+func (client *Client) installationTokenPermissions() (map[string]string, error) {
+	switch client.profile {
+	case CredentialProfileReleaseAutomation:
+		return map[string]string{
+			"actions":       "write",
+			"contents":      "read",
+			"pull_requests": "write",
+		}, nil
+	case CredentialProfileReconciliationPublisher:
+		return map[string]string{
+			"contents":      "write",
+			"pull_requests": "write",
+		}, nil
+	default:
+		return nil, fmt.Errorf("unsupported GitHub credential profile %q", client.profile)
+	}
 }
 
 func (client *Client) installationTokenURL() string {

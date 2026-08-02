@@ -46,6 +46,38 @@ Create the protected GitHub Environment `gcp-broker-deployment` before
 dispatching the workflow. Restrict it to `develop`; require a release
 maintainer approval when the selected GitHub plan supports that control.
 
+## Credential profiles
+
+The existing release-automation deployment sets:
+
+```text
+BROKER_CREDENTIAL_PROFILE=release-automation
+```
+
+That profile requests only the fixed release-lifecycle permissions:
+
+```text
+actions: write
+contents: read
+pull_requests: write
+```
+
+A separate reconciliation-publisher broker deployment must set:
+
+```text
+BROKER_CREDENTIAL_PROFILE=reconciliation-publisher
+```
+
+That profile requests:
+
+```text
+contents: write
+pull_requests: write
+```
+
+It never requests an Actions permission. The profile is a server-side runtime
+configuration; broker callers cannot select it through the HTTP request.
+
 ## Workflow operations
 
 The workflow accepts two explicit operations:

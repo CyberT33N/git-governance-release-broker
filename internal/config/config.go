@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/CyberT33N/git-governance-release-broker/internal/githubapp"
 )
 
 const (
@@ -17,6 +19,7 @@ const (
 	EnvAllowedRepositories      = "BROKER_ALLOWED_REPOSITORIES"
 	EnvBrokerAppID              = "BROKER_APP_ID"
 	EnvBrokerInstallationID     = "BROKER_APP_INSTALLATION_ID"
+	EnvCredentialProfile        = "BROKER_CREDENTIAL_PROFILE"
 	EnvBrokerPrivateKeyPath     = "BROKER_PRIVATE_KEY_PATH"
 	EnvBrokerAPIBaseURL         = "BROKER_API_BASE_URL"
 	EnvRequestTimeout           = "BROKER_REQUEST_TIMEOUT"
@@ -42,6 +45,7 @@ type Config struct {
 	AllowedRepositories  map[Repository]struct{}
 	GitHubAppID          string
 	GitHubInstallationID string
+	CredentialProfile    githubapp.CredentialProfile
 	PrivateKeyPath       string
 	GitHubAPIBaseURL     string
 	RequestTimeout       time.Duration
@@ -74,6 +78,11 @@ func load(getenv func(string) string) (Config, error) {
 		return Config{}, err
 	}
 
+	credentialProfile, err := githubapp.ParseCredentialProfile(getenv(EnvCredentialProfile))
+	if err != nil {
+		return Config{}, fmt.Errorf("%s: %w", EnvCredentialProfile, err)
+	}
+
 	privateKeyPath := strings.TrimSpace(getenv(EnvBrokerPrivateKeyPath))
 	if privateKeyPath == "" {
 		return Config{}, requiredValueError(EnvBrokerPrivateKeyPath)
@@ -101,6 +110,7 @@ func load(getenv func(string) string) (Config, error) {
 		AllowedRepositories:  allowed,
 		GitHubAppID:          appID,
 		GitHubInstallationID: installationID,
+		CredentialProfile:    credentialProfile,
 		PrivateKeyPath:       privateKeyPath,
 		GitHubAPIBaseURL:     apiBaseURL,
 		RequestTimeout:       requestTimeout,
