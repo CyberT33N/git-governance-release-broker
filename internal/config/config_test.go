@@ -4,12 +4,15 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/CyberT33N/git-governance-release-broker/internal/githubapp"
 )
 
 func TestLoadUsesConfiguredAndDefaultValues(t *testing.T) {
 	t.Setenv(EnvAllowedRepositories, "github.com/CyberT33N/git-governance,github.example/acme/release")
 	t.Setenv(EnvBrokerAppID, "42")
 	t.Setenv(EnvBrokerInstallationID, "99")
+	t.Setenv(EnvCredentialProfile, "")
 	t.Setenv(EnvBrokerPrivateKeyPath, "/var/run/key.pem")
 	t.Setenv(EnvPort, "")
 	t.Setenv(EnvBrokerAPIBaseURL, "")
@@ -31,6 +34,9 @@ func TestLoadUsesConfiguredAndDefaultValues(t *testing.T) {
 	if configuration.GitHubAPIBaseURL != defaultGitHubAPIBaseURL {
 		t.Fatalf("GitHubAPIBaseURL = %q, want %q", configuration.GitHubAPIBaseURL, defaultGitHubAPIBaseURL)
 	}
+	if configuration.CredentialProfile != githubapp.CredentialProfileReleaseAutomation {
+		t.Fatalf("CredentialProfile = %q, want %q", configuration.CredentialProfile, githubapp.CredentialProfileReleaseAutomation)
+	}
 	if configuration.RequestTimeout != defaultRequestTimeout {
 		t.Fatalf("RequestTimeout = %s, want %s", configuration.RequestTimeout, defaultRequestTimeout)
 	}
@@ -47,6 +53,7 @@ func TestLoadRejectsInvalidValues(t *testing.T) {
 		EnvAllowedRepositories:  "github.com/CyberT33N/git-governance",
 		EnvBrokerAppID:          "1",
 		EnvBrokerInstallationID: "2",
+		EnvCredentialProfile:    string(githubapp.CredentialProfileReconciliationPublisher),
 		EnvBrokerPrivateKeyPath: "/key.pem",
 	}
 
@@ -55,6 +62,7 @@ func TestLoadRejectsInvalidValues(t *testing.T) {
 		EnvAllowedRepositories:  "invalid",
 		EnvBrokerAppID:          "0",
 		EnvBrokerInstallationID: "-1",
+		EnvCredentialProfile:    "untrusted",
 		EnvBrokerPrivateKeyPath: " ",
 		EnvBrokerAPIBaseURL:     "http://api.github.com",
 		EnvRequestTimeout:       "-1s",
@@ -85,6 +93,14 @@ func TestLoadRejectsInvalidValues(t *testing.T) {
 				t.Fatalf("load() error = %v, want error mentioning %s", err, name)
 			}
 		})
+	}
+
+	configuration, err := load(func(key string) string { return valid[key] })
+	if err != nil {
+		t.Fatalf("load() error = %v", err)
+	}
+	if configuration.CredentialProfile != githubapp.CredentialProfileReconciliationPublisher {
+		t.Fatalf("CredentialProfile = %q, want %q", configuration.CredentialProfile, githubapp.CredentialProfileReconciliationPublisher)
 	}
 }
 

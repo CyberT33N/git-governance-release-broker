@@ -29,27 +29,53 @@ func TestNewClientValidatesDependencies(t *testing.T) {
 		name           string
 		appID          string
 		installationID string
+		profile        CredentialProfile
 		key            *rsa.PrivateKey
 		apiBaseURL     string
 	}{
 		{name: "missing app ID", installationID: "2", key: key, apiBaseURL: "https://api.github.com"},
 		{name: "missing installation ID", appID: "1", key: key, apiBaseURL: "https://api.github.com"},
+		{name: "invalid credential profile", appID: "1", installationID: "2", profile: "invalid", key: key, apiBaseURL: "https://api.github.com"},
 		{name: "missing key", appID: "1", installationID: "2", apiBaseURL: "https://api.github.com"},
 		{name: "invalid API base URL", appID: "1", installationID: "2", key: key, apiBaseURL: "://"},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
-			if _, err := NewClient(testCase.appID, testCase.installationID, testCase.key, testCase.apiBaseURL, nil, nil); err == nil {
+			if _, err := NewClient(testCase.appID, testCase.installationID, testCase.profile, testCase.key, testCase.apiBaseURL, nil, nil); err == nil {
 				t.Fatal("NewClient() error = nil")
 			}
 		})
 	}
 
-	client, err := NewClient(" 1 ", " 2 ", key, "https://api.github.com", nil, nil)
+	client, err := NewClient(" 1 ", " 2 ", CredentialProfileReconciliationPublisher, key, "https://api.github.com", nil, nil)
 	if err != nil {
 		t.Fatalf("NewClient() error = %v", err)
 	}
-	if client.appID != "1" || client.installationID != "2" || client.httpClient == nil || client.now == nil {
+	if client.appID != "1" || client.installationID != "2" || client.profile != CredentialProfileReconciliationPublisher || client.httpClient == nil || client.now == nil {
 		t.Fatalf("NewClient() = %#v", client)
+	}
+}
+
+func TestParseCredentialProfile(t *testing.T) {
+	for _, testCase := range []struct {
+		name  string
+		value string
+		want  CredentialProfile
+		ok    bool
+	}{
+		{name: "default", want: CredentialProfileReleaseAutomation, ok: true},
+		{name: "release automation", value: string(CredentialProfileReleaseAutomation), want: CredentialProfileReleaseAutomation, ok: true},
+		{name: "reconciliation publisher", value: string(CredentialProfileReconciliationPublisher), want: CredentialProfileReconciliationPublisher, ok: true},
+		{name: "invalid", value: "untrusted"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			got, err := ParseCredentialProfile(testCase.value)
+			if (err == nil) != testCase.ok {
+				t.Fatalf("ParseCredentialProfile(%q) error = %v, want success %t", testCase.value, err, testCase.ok)
+			}
+			if got != testCase.want {
+				t.Fatalf("ParseCredentialProfile(%q) = %q, want %q", testCase.value, got, testCase.want)
+			}
+		})
 	}
 }
 
@@ -92,50 +118,76 @@ func TestLoadPrivateKey(t *testing.T) {
 func TestMintRequestsRepositoryBoundInstallationToken(t *testing.T) {
 	key := testPrivateKey(t)
 	now := time.Date(2026, time.July, 19, 1, 0, 0, 0, time.UTC)
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		if request.Method != http.MethodPost || request.URL.Path != "/api/v3/app/installations/34/access_tokens" {
-			t.Fatalf("request = %s %s", request.Method, request.URL.Path)
-		}
-		if request.Header.Get("Accept") != "application/vnd.github+json" {
-			t.Fatalf("Accept = %q", request.Header.Get("Accept"))
-		}
-		if request.Header.Get("Content-Type") != "application/json" {
-			t.Fatalf("Content-Type = %q", request.Header.Get("Content-Type"))
-		}
-		if request.Header.Get("User-Agent") != "git-governance-release-broker" {
-			t.Fatalf("User-Agent = %q", request.Header.Get("User-Agent"))
-		}
-		verifyJWT(t, strings.TrimPrefix(request.Header.Get("Authorization"), "Bearer "), &key.PublicKey, now)
+	for _, testCase := range []struct {
+		name        string
+		profile     CredentialProfile
+		permissions map[string]string
+	}{
+		{
+			name:    "release automation",
+			profile: CredentialProfileReleaseAutomation,
+			permissions: map[string]string{
+				"actions":       "write",
+				"contents":      "read",
+				"pull_requests": "write",
+			},
+		},
+		{
+			name:    "reconciliation publisher",
+			profile: CredentialProfileReconciliationPublisher,
+			permissions: map[string]string{
+				"contents":      "write",
+				"pull_requests": "write",
+			},
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+				if request.Method != http.MethodPost || request.URL.Path != "/api/v3/app/installations/34/access_tokens" {
+					t.Fatalf("request = %s %s", request.Method, request.URL.Path)
+				}
+				if request.Header.Get("Accept") != "application/vnd.github+json" {
+					t.Fatalf("Accept = %q", request.Header.Get("Accept"))
+				}
+				if request.Header.Get("Content-Type") != "application/json" {
+					t.Fatalf("Content-Type = %q", request.Header.Get("Content-Type"))
+				}
+				if request.Header.Get("User-Agent") != "git-governance-release-broker" {
+					t.Fatalf("User-Agent = %q", request.Header.Get("User-Agent"))
+				}
+				verifyJWT(t, strings.TrimPrefix(request.Header.Get("Authorization"), "Bearer "), &key.PublicKey, now)
 
-		var body tokenRequest
-		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
-			t.Fatalf("Decode() error = %v", err)
-		}
-		if len(body.Repositories) != 1 || body.Repositories[0] != "git-governance" {
-			t.Fatalf("Repositories = %#v", body.Repositories)
-		}
-		if body.Permissions["actions"] != "write" || body.Permissions["contents"] != "read" || body.Permissions["pull_requests"] != "write" {
-			t.Fatalf("Permissions = %#v", body.Permissions)
-		}
+				var body tokenRequest
+				if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+					t.Fatalf("Decode() error = %v", err)
+				}
+				if len(body.Repositories) != 1 || body.Repositories[0] != "git-governance" {
+					t.Fatalf("Repositories = %#v", body.Repositories)
+				}
+				if !mapsEqual(body.Permissions, testCase.permissions) {
+					t.Fatalf("Permissions = %#v, want %#v", body.Permissions, testCase.permissions)
+				}
 
-		writer.WriteHeader(http.StatusCreated)
-		_, _ = writer.Write([]byte(`{"token":"installation-token","expires_at":"2026-07-19T02:00:00Z"}`))
-	}))
-	defer server.Close()
+				writer.WriteHeader(http.StatusCreated)
+				_, _ = writer.Write([]byte(`{"token":"installation-token","expires_at":"2026-07-19T02:00:00Z"}`))
+			}))
+			defer server.Close()
 
-	client, err := NewClient("12", "34", key, server.URL+"/api/v3", server.Client(), func() time.Time { return now })
-	if err != nil {
-		t.Fatalf("NewClient() error = %v", err)
-	}
-	issued, err := client.Mint(context.Background(), " git-governance ")
-	if err != nil {
-		t.Fatalf("Mint() error = %v", err)
-	}
-	if issued.Value != "installation-token" || !issued.ExpiresAt.Equal(time.Date(2026, time.July, 19, 2, 0, 0, 0, time.UTC)) {
-		t.Fatalf("Mint() = %#v", issued)
-	}
-	if got := client.installationTokenURL(); got != server.URL+"/api/v3/app/installations/34/access_tokens" {
-		t.Fatalf("installationTokenURL() = %q", got)
+			client, err := NewClient("12", "34", testCase.profile, key, server.URL+"/api/v3", server.Client(), func() time.Time { return now })
+			if err != nil {
+				t.Fatalf("NewClient() error = %v", err)
+			}
+			issued, err := client.Mint(context.Background(), " git-governance ")
+			if err != nil {
+				t.Fatalf("Mint() error = %v", err)
+			}
+			if issued.Value != "installation-token" || !issued.ExpiresAt.Equal(time.Date(2026, time.July, 19, 2, 0, 0, 0, time.UTC)) {
+				t.Fatalf("Mint() = %#v", issued)
+			}
+			if got := client.installationTokenURL(); got != server.URL+"/api/v3/app/installations/34/access_tokens" {
+				t.Fatalf("installationTokenURL() = %q", got)
+			}
+		})
 	}
 }
 
@@ -143,7 +195,7 @@ func TestMintRejectsInvalidInputsAndResponses(t *testing.T) {
 	key := testPrivateKey(t)
 	now := time.Date(2026, time.July, 19, 1, 0, 0, 0, time.UTC)
 
-	client, err := NewClient("1", "2", key, "https://api.github.com", nil, func() time.Time { return now })
+	client, err := NewClient("1", "2", CredentialProfileReleaseAutomation, key, "https://api.github.com", nil, func() time.Time { return now })
 	if err != nil {
 		t.Fatalf("NewClient() error = %v", err)
 	}
@@ -155,6 +207,11 @@ func TestMintRejectsInvalidInputsAndResponses(t *testing.T) {
 	if _, err := client.Mint(nil, "repository"); err == nil {
 		t.Fatal("Mint(nil) error = nil")
 	}
+	client.profile = CredentialProfile("untrusted")
+	if _, err := client.Mint(context.Background(), "repository"); err == nil {
+		t.Fatal("Mint(untrusted profile) error = nil")
+	}
+	client.profile = CredentialProfileReleaseAutomation
 
 	for _, response := range []struct {
 		name   string
@@ -173,7 +230,7 @@ func TestMintRejectsInvalidInputsAndResponses(t *testing.T) {
 			}))
 			defer server.Close()
 
-			testClient, err := NewClient("1", "2", key, server.URL, server.Client(), func() time.Time { return now })
+			testClient, err := NewClient("1", "2", CredentialProfileReleaseAutomation, key, server.URL, server.Client(), func() time.Time { return now })
 			if err != nil {
 				t.Fatalf("NewClient() error = %v", err)
 			}
@@ -185,7 +242,7 @@ func TestMintRejectsInvalidInputsAndResponses(t *testing.T) {
 }
 
 func TestSignedJWTRejectsInvalidPrivateKey(t *testing.T) {
-	client, err := NewClient("1", "2", &rsa.PrivateKey{}, "https://api.github.com", nil, time.Now)
+	client, err := NewClient("1", "2", CredentialProfileReleaseAutomation, &rsa.PrivateKey{}, "https://api.github.com", nil, time.Now)
 	if err != nil {
 		t.Fatalf("NewClient() error = %v", err)
 	}
@@ -197,7 +254,7 @@ func TestSignedJWTRejectsInvalidPrivateKey(t *testing.T) {
 func TestMintCoversInfrastructureFailures(t *testing.T) {
 	key := testPrivateKey(t)
 	now := time.Date(2026, time.July, 19, 1, 0, 0, 0, time.UTC)
-	client, err := NewClient("1", "2", key, "https://api.github.com", nil, func() time.Time { return now })
+	client, err := NewClient("1", "2", CredentialProfileReleaseAutomation, key, "https://api.github.com", nil, func() time.Time { return now })
 	if err != nil {
 		t.Fatalf("NewClient() error = %v", err)
 	}
@@ -224,7 +281,7 @@ func TestMintCoversInfrastructureFailures(t *testing.T) {
 func TestJWTAndRequestEncodingFailures(t *testing.T) {
 	key := testPrivateKey(t)
 	now := time.Date(2026, time.July, 19, 1, 0, 0, 0, time.UTC)
-	client, err := NewClient("1", "2", key, "https://api.github.com", nil, func() time.Time { return now })
+	client, err := NewClient("1", "2", CredentialProfileReleaseAutomation, key, "https://api.github.com", nil, func() time.Time { return now })
 	if err != nil {
 		t.Fatalf("NewClient() error = %v", err)
 	}
@@ -271,7 +328,7 @@ func TestJWTAndRequestEncodingFailures(t *testing.T) {
 		t.Fatal("HTTP request must not be sent when body encoding fails")
 	}))
 	defer server.Close()
-	client, err = NewClient("1", "2", key, server.URL, server.Client(), func() time.Time { return now })
+	client, err = NewClient("1", "2", CredentialProfileReleaseAutomation, key, server.URL, server.Client(), func() time.Time { return now })
 	if err != nil {
 		t.Fatalf("NewClient() error = %v", err)
 	}
@@ -340,4 +397,16 @@ func verifyJWT(t *testing.T, value string, key *rsa.PublicKey, now time.Time) {
 	if err := rsa.VerifyPKCS1v15(key, crypto.SHA256, digest[:], signature); err != nil {
 		t.Fatalf("VerifyPKCS1v15() error = %v", err)
 	}
+}
+
+func mapsEqual(left, right map[string]string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for key, leftValue := range left {
+		if right[key] != leftValue {
+			return false
+		}
+	}
+	return true
 }

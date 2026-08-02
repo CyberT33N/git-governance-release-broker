@@ -148,7 +148,7 @@ jobs:
             --max-instances=1 \
             --timeout=10s \
             --execution-environment=gen2 \
-            --set-env-vars="^@^BROKER_APP_ID=${RELEASE_APP_ID}@BROKER_APP_INSTALLATION_ID=${RELEASE_APP_INSTALLATION_ID}@BROKER_PRIVATE_KEY_PATH=/var/run/secrets/github-app/private-key.pem@BROKER_ALLOWED_REPOSITORIES=${BROKER_ALLOWED_REPOSITORIES}" \
+            --set-env-vars="^@^BROKER_APP_ID=${RELEASE_APP_ID}@BROKER_APP_INSTALLATION_ID=${RELEASE_APP_INSTALLATION_ID}@BROKER_CREDENTIAL_PROFILE=release-automation@BROKER_PRIVATE_KEY_PATH=/var/run/secrets/github-app/private-key.pem@BROKER_ALLOWED_REPOSITORIES=${BROKER_ALLOWED_REPOSITORIES}" \
             --update-secrets="/var/run/secrets/github-app/private-key.pem=${BROKER_SECRET}:1" \
             --quiet
 

@@ -41,6 +41,13 @@ developer workstation, or written to logs.
 - `BROKER_APP_ID` is required and contains the numeric GitHub App ID.
 - `BROKER_APP_INSTALLATION_ID` is required and contains the numeric approved
   repository installation ID.
+- `BROKER_CREDENTIAL_PROFILE` selects a fixed server-side permission profile.
+  It defaults to `release-automation`. Accepted values are:
+  - `release-automation`: `actions: write`, `contents: read`, and
+    `pull_requests: write`;
+  - `reconciliation-publisher`: `contents: write` and
+    `pull_requests: write`, without an Actions permission request.
+  The HTTP request never selects a profile or GitHub permission.
 - `BROKER_PRIVATE_KEY_PATH` is required and contains the mounted PEM file
   path.
 - `PORT` is optional and defaults to `8080`.

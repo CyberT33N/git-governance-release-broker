@@ -92,6 +92,7 @@ func buildHandler(logger *slog.Logger) (http.Handler, string, error) {
 	issuer, err := newGitHubClient(
 		configuration.GitHubAppID,
 		configuration.GitHubInstallationID,
+		configuration.CredentialProfile,
 		privateKey,
 		configuration.GitHubAPIBaseURL,
 		&http.Client{Timeout: configuration.RequestTimeout},
