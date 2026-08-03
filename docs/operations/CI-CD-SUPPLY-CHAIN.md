@@ -39,6 +39,11 @@ GitHub Actions
 Docker base images
 ```
 
+The `develop` target applies to version updates. GitHub Dependabot security
+updates always target the repository default branch, `main`. They are intake
+signals only and must be triaged into the governed hotfix process; they do not
+authorize a direct main merge.
+
 Dependabot does not approve, bypass, merge, or deploy changes. Every update
 remains subject to dependency admission review, CodeQL, Linux quality gates,
 required review, and protected-branch policy.
