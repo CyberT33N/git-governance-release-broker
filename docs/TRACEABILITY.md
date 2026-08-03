@@ -23,6 +23,7 @@ Scope:
 ```text
 Linux AMD64 required quality gate
 CodeQL and dependency admission workflows
+Dependabot intake for Go modules, GitHub Actions, and Docker base images
 broker-specific source quality command
 Windows/macOS required runtime check removal
 Ruleset check-name alignment

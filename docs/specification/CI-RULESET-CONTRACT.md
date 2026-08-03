@@ -39,6 +39,20 @@ artifact evidence registry are provisioned.
 reviews dependency changes for pull requests targeting protected integration or
 production lines.
 
+## Dependabot
+
+`.github/dependabot.yml` opens daily, bounded update pull requests against
+`develop` for Go modules, GitHub Actions, and Docker base images. It is an
+intake mechanism, not a merge or deployment authority.
+
+```text
+fail-on-severity: low
+→ blocks every newly introduced low, moderate, high, or critical advisory
+
+fail-on-scopes: development, runtime, unknown
+→ blocks findings across every declared dependency scope
+```
+
 ## Ruleset restrictions
 
 Rulesets remain fail-closed:
