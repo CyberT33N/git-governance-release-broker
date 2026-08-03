@@ -45,6 +45,13 @@ production lines.
 `develop` for Go modules, GitHub Actions, and Docker base images. It is an
 intake mechanism, not a merge or deployment authority.
 
+The `target-branch: develop` configuration applies to version updates. GitHub
+security-update pull requests always target the default branch, `main`, and
+must be triaged into the governed hotfix process before any merge.
+
+Dependabot becomes active only after this configuration reaches the default
+branch, `main`; merging it into `develop` alone does not activate the service.
+
 ```text
 fail-on-severity: low
 → blocks every newly introduced low, moderate, high, or critical advisory
