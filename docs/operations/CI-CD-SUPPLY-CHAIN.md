@@ -67,6 +67,27 @@ The approved Go proxy, hermetic build image, and evidence registry have not
 yet been provisioned. Until they exist, no workflow may claim a completed
 Supply-Chain-Fortress production delivery.
 
+## Deployment topology
+
+The staging deployment workflow is develop-bound and builds only the isolated
+staging Broker. Production workflows are main-bound and accept only immutable
+image digests from their configured production repository.
+
+```text
+gcp-broker-staging
+→ staging release-automation profile
+
+gcp-broker-production
+→ production release-automation profile
+
+gcp-reconciliation-publisher-deployment
+→ production reconciliation-publisher profile
+```
+
+The three environments, service identities, secrets, image repositories, and
+Cloud Run services must remain separate. No deployer, runtime, or invoker
+identity receives permissions across those boundaries.
+
 ## Incident handling
 
 If a module, toolchain, build image, App identity, or artifact evidence source

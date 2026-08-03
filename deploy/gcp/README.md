@@ -1,114 +1,140 @@
-# GCP deployment
+# GCP deployment topology
 
-The deployment workflow provisions the Artifact Registry repository, builds an
-immutable Linux AMD64 broker image from `develop`, and deploys Cloud Run without
-making the broker publicly invokable.
+## Deployment lanes
 
-## Prerequisites
-
-Before dispatching `.github/workflows/gcp-deploy.yml`, create a dedicated
-`broker-deployer` Google service account. It is distinct from:
-
-- `broker-runtime`, which reads only the GitHub App private key at runtime;
-- `release-broker-invoker`, which invokes the running private broker.
-
-The GitHub Workload Identity Federation principal for this repository may
-impersonate `broker-deployer`. The deployer needs only these narrowly scoped
-permissions:
-
-- Artifact Registry writer on `release-broker-images`;
-- Cloud Run administrator for the broker service;
-- Service Account User on `broker-runtime`;
-- permission to attach the existing Secret Manager secret to the Cloud Run
-  service.
-
-Do not give `broker-deployer` Secret Manager Secret Accessor. The running
-`broker-runtime` identity is the only identity that reads secret payloads.
-
-## Required GitHub repository variables
-
-Create the following GitHub Actions repository variables. They are deployment
-identifiers, not secrets:
-
-- `GCP_PROJECT_ID`: the GCP project ID.
-- `GCP_REGION`: one region for Artifact Registry and Cloud Run, for example
-  `europe-west3`.
-- `GCP_WORKLOAD_IDENTITY_PROVIDER`: the complete Workload Identity provider
-  resource name.
-- `GCP_DEPLOYER_SERVICE_ACCOUNT`: `broker-deployer` service-account email.
-- `GCP_SDK_VERSION`: an explicitly approved Google Cloud SDK version.
-- `RELEASE_APP_ID`: the numeric release GitHub App ID.
-- `RELEASE_APP_INSTALLATION_ID`: the numeric installation ID.
-- `BROKER_ALLOWED_REPOSITORIES`: the exact comma-separated allowlist, for
-  example `github.com/CyberT33N/git-governance`.
-
-Create the protected GitHub Environment `gcp-broker-deployment` before
-dispatching the workflow. Restrict it to `develop`; require a release
-maintainer approval when the selected GitHub plan supports that control.
-
-## Credential profiles
-
-The existing release-automation deployment sets:
+The Broker has three separate deployment lanes:
 
 ```text
-BROKER_CREDENTIAL_PROFILE=release-automation
+develop
+→ gcp-broker-staging
+→ isolated staging image repository
+→ isolated staging Cloud Run service
+
+main
+→ gcp-broker-production
+→ immutable digest from the production image repository
+→ production release-automation broker
+
+main
+→ gcp-reconciliation-publisher-deployment
+→ immutable digest from the publisher production repository
+→ production reconciliation-publisher broker
 ```
 
-That profile requests only the fixed release-lifecycle permissions:
+The former develop-bound `gcp-broker-deployment` workflow is retired. A
+production deployment must never build and deploy unpromoted `develop` source.
+
+## GitHub environments
+
+Create these protected environments before dispatching the workflows:
 
 ```text
-actions: write
-contents: read
-pull_requests: write
+gcp-broker-staging
+→ selected branch: develop
+→ required reviewers
+→ prevent self-review
+→ administrator bypass disabled
+
+gcp-broker-production
+→ selected branch: main
+→ required reviewers
+→ prevent self-review
+→ administrator bypass disabled
+
+gcp-reconciliation-publisher-deployment
+→ selected branch: main
+→ required reviewers
+→ prevent self-review
+→ administrator bypass disabled
 ```
 
-A separate reconciliation-publisher broker deployment must set:
+## Staging resources
+
+The `gcp-broker-staging.yml` workflow requires environment variables:
+
+```text
+GCP_PROJECT_ID
+GCP_REGION
+GCP_SDK_VERSION
+GCP_STAGING_WORKLOAD_IDENTITY_PROVIDER
+GCP_STAGING_DEPLOYER_SERVICE_ACCOUNT
+GCP_STAGING_ARTIFACT_REPOSITORY
+GCP_STAGING_BROKER_SERVICE
+GCP_STAGING_RUNTIME_SERVICE_ACCOUNT
+GCP_STAGING_INVOKER_SERVICE_ACCOUNT
+GCP_STAGING_BROKER_SECRET
+GCP_STAGING_BROKER_APP_ID
+GCP_STAGING_BROKER_APP_INSTALLATION_ID
+GCP_STAGING_BROKER_ALLOWED_REPOSITORIES
+```
+
+The staging deployer has Artifact Registry writer, Cloud Run deployment, and
+Service Account User permissions only for staging resources. The staging
+runtime identity reads only its staging GitHub App key secret.
+
+## Production release-automation resources
+
+The `gcp-broker-production.yml` workflow requires:
+
+```text
+GCP_PROJECT_ID
+GCP_REGION
+GCP_SDK_VERSION
+GCP_PRODUCTION_WORKLOAD_IDENTITY_PROVIDER
+GCP_PRODUCTION_DEPLOYER_SERVICE_ACCOUNT
+GCP_PRODUCTION_ARTIFACT_REPOSITORY
+GCP_PRODUCTION_BROKER_SERVICE
+GCP_PRODUCTION_RUNTIME_SERVICE_ACCOUNT
+GCP_PRODUCTION_INVOKER_SERVICE_ACCOUNT
+GCP_PRODUCTION_BROKER_SECRET
+GCP_PRODUCTION_BROKER_APP_ID
+GCP_PRODUCTION_BROKER_APP_INSTALLATION_ID
+GCP_PRODUCTION_BROKER_ALLOWED_REPOSITORIES
+```
+
+Production accepts only a full immutable image reference:
+
+```text
+<region>-docker.pkg.dev/<project>/<production-repository>/broker@sha256:<64-lowercase-hex-digest>
+```
+
+It never builds from `develop`, accepts a mutable tag, or creates a public
+Cloud Run service.
+
+## Reconciliation publisher resources
+
+The `gcp-reconciliation-publisher-production.yml` workflow requires:
+
+```text
+GCP_PROJECT_ID
+GCP_REGION
+GCP_SDK_VERSION
+GCP_RECONCILIATION_PUBLISHER_DEPLOYMENT_WORKLOAD_IDENTITY_PROVIDER
+GCP_RECONCILIATION_PUBLISHER_DEPLOYMENT_SERVICE_ACCOUNT
+GCP_RECONCILIATION_PUBLISHER_ARTIFACT_REPOSITORY
+GCP_RECONCILIATION_PUBLISHER_BROKER_SERVICE
+GCP_RECONCILIATION_PUBLISHER_RUNTIME_SERVICE_ACCOUNT
+GCP_RECONCILIATION_PUBLISHER_INVOKER_SERVICE_ACCOUNT
+GCP_RECONCILIATION_PUBLISHER_BROKER_SECRET
+GCP_RECONCILIATION_PUBLISHER_BROKER_APP_ID
+GCP_RECONCILIATION_PUBLISHER_BROKER_APP_INSTALLATION_ID
+GCP_RECONCILIATION_PUBLISHER_BROKER_ALLOWED_REPOSITORIES
+```
+
+The publisher broker always runs:
 
 ```text
 BROKER_CREDENTIAL_PROFILE=reconciliation-publisher
 ```
 
-That profile requests:
+Its GitHub App is separate from release automation and has only the repository
+and permissions required to publish a provenance-validated reconciliation
+candidate.
 
-```text
-contents: write
-pull_requests: write
-```
+## External Fortress prerequisites
 
-It never requests an Actions permission. The profile is a server-side runtime
-configuration; broker callers cannot select it through the HTTP request.
-
-## Workflow operations
-
-The workflow accepts two explicit operations:
-
-- `bootstrap`: creates the Docker Artifact Registry repository if it is absent.
-- `deploy`: builds an image from the selected `develop` commit, pushes it with
-  an immutable commit tag, resolves its digest, deploys Cloud Run, mounts the
-  existing secret as a file, and grants the narrow invoker identity access.
-
-Run `bootstrap` once. Run `deploy` only from `develop` after a reviewed merge.
-
-## Runtime resource contract
-
-The deployment uses:
-
-```text
-Artifact Registry repository: release-broker-images
-Cloud Run service: git-governance-release-broker
-Runtime service account: broker-runtime
-Invoker service account: release-broker-invoker
-Secret: github-release-automation-private-key
-Secret mount: /var/run/secrets/github-app/private-key.pem
-```
-
-Cloud Run receives `--no-allow-unauthenticated`, one maximum instance for the
-test environment, and a zero minimum-instance count. The service is reachable
-over HTTPS only after Cloud Run IAM validates an ID token from the approved
-invoker identity.
-
-GitHub Actions reserves the `GITHUB_` prefix for its own configuration
-variables. The deployment workflow therefore reads `RELEASE_APP_ID` and
-`RELEASE_APP_INSTALLATION_ID`, then passes their values to Cloud Run as the
-broker runtime variables `BROKER_APP_ID` and
-`BROKER_APP_INSTALLATION_ID`.
+The approved Go proxy, hermetic build image, production image promotion,
+SBOM, provenance, signature, and attestation registry are external platform
+controls. These workflows fail closed on missing environment variables but do
+not claim those controls exist until the corresponding platform resources are
+provisioned and verified.
