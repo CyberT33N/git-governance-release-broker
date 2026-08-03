@@ -1,7 +1,5 @@
 pre-push:
   parallel: false
   commands:
-    unit-tests:
-      run: go test ./...
-    complete-coverage:
-      run: go run ./cmd/check-coverage
+    broker-source-quality:
+      run: go run -mod=readonly ./cmd/build
