@@ -29,6 +29,20 @@ Dependency admission review
 GitHub Rulesets must require only checks that the repository actually emits.
 Windows and macOS runtime check contexts are not part of this Broker contract.
 
+## Automated dependency intake
+
+Dependabot opens bounded daily pull requests against `develop` for:
+
+```text
+Go modules
+GitHub Actions
+Docker base images
+```
+
+Dependabot does not approve, bypass, merge, or deploy changes. Every update
+remains subject to dependency admission review, CodeQL, Linux quality gates,
+required review, and protected-branch policy.
+
 ## Artifact evidence
 
 The target production artifact flow is:
