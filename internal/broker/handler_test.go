@@ -227,6 +227,33 @@ func TestHelpers(t *testing.T) {
 	}
 }
 
+func FuzzTokenRequestBoundary(f *testing.F) {
+	for _, body := range []string{
+		validTokenRequest(),
+		"",
+		"{",
+		`{"host":"github.com","owner":"CyberT33N","repository":"git-governance","extra":true}`,
+		`{"host":"github.com","owner":"CyberT33N","repository":"git-governance"} {}`,
+	} {
+		f.Add(body)
+	}
+
+	handler, err := NewHandler(testConfig(), issuerFunc(func(context.Context, string) (githubapp.Token, error) {
+		return githubapp.Token{Value: "token", ExpiresAt: time.Now().Add(time.Hour)}, nil
+	}), nil)
+	if err != nil {
+		f.Fatalf("NewHandler() error = %v", err)
+	}
+	handler.requestID = func() string { return "fuzz-request" }
+	f.Fuzz(func(t *testing.T, body string) {
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, tokenRequestHTTP(http.MethodPost, body))
+		if response.Code < http.StatusOK || response.Code > http.StatusInternalServerError {
+			t.Fatalf("status = %d", response.Code)
+		}
+	})
+}
+
 func testConfig() config.Config {
 	return config.Config{
 		AllowedRepositories: map[config.Repository]struct{}{

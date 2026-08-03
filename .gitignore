@@ -5,6 +5,7 @@
 *.crt
 coverage.out
 bin/
+.build/
 dist/
 *.out
 coverage
