@@ -220,6 +220,21 @@ func TestConfigRepositoryAllowedAndListenAddress(t *testing.T) {
 	}
 }
 
+func FuzzParseRepository(f *testing.F) {
+	for _, value := range []string{
+		"github.com/CyberT33N/git-governance",
+		"",
+		"github.com/owner/repository/extra",
+		"github .com/owner/repository",
+	} {
+		f.Add(value)
+	}
+
+	f.Fuzz(func(t *testing.T, value string) {
+		_, _ = parseRepository(value)
+	})
+}
+
 func cloneEnvironment(source map[string]string) map[string]string {
 	result := make(map[string]string, len(source))
 	for key, value := range source {

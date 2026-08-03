@@ -14,22 +14,14 @@
   },
   "gates": [
     {
-      "name": "go-tests",
-      "command": "go",
-      "args": [
-        "test",
-        "./..."
-      ],
-      "timeout": "5m"
-    },
-    {
-      "name": "go-complete-coverage",
+      "name": "broker-source-quality",
       "command": "go",
       "args": [
         "run",
-        "./cmd/check-coverage"
+        "-mod=readonly",
+        "./cmd/build"
       ],
-      "timeout": "5m"
+      "timeout": "15m"
     }
   ]
 }

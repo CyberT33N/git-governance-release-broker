@@ -56,9 +56,15 @@ The broker cannot mint credentials without a GitHub App key, but its test suite
 does not use a production key.
 
 ```powershell
-go test ./...
-go run ./cmd/check-coverage
+go run -mod=readonly ./cmd/build
 ```
+
+The command runs the source-level Broker quality contract and builds a Linux
+AMD64 broker binary under `.build/bin/`. It does not deploy Cloud Run or use a
+production credential.
+
+See [`docs/README.md`](docs/README.md) for the architecture, verification, CI,
+and Supply-Chain conventions.
 
 ## Container build
 
