@@ -12,6 +12,9 @@ deployments.
 
 - `architecture/ADR-0001-LINUX-ONLY-BROKER-DELIVERY.md` records why the
   production delivery contract is Linux AMD64 only.
+- `architecture/ADR-0002-MAIN-BOUND-BROKER-DEPLOYMENT-TOPOLOGY.md` records
+  separate staging, release-automation production, and reconciliation-publisher
+  production boundaries.
 - `development/VERIFICATION.md` defines local safe verification and the
   Linux production quality gate.
 - `operations/CI-CD-SUPPLY-CHAIN.md` defines CI/CD identity, artifact, and

@@ -1,10 +1,10 @@
-name: Deploy GCP broker
+name: Deploy Broker Staging
 
 on:
   workflow_dispatch:
     inputs:
       operation:
-        description: Create the registry once or build and deploy the reviewed broker.
+        description: Create the isolated staging registry once or deploy the reviewed develop revision.
         required: true
         type: choice
         options:
@@ -16,55 +16,51 @@ permissions:
   id-token: write
 
 concurrency:
-  group: gcp-broker-deployment
+  group: gcp-broker-staging-${{ inputs.operation }}
   cancel-in-progress: false
-
-env:
-  ARTIFACT_REPOSITORY: release-broker-images
-  BROKER_SERVICE: git-governance-release-broker
-  BROKER_SECRET: github-release-automation-private-key
-  GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
-  GCP_REGION: ${{ vars.GCP_REGION }}
-  GCP_SDK_VERSION: ${{ vars.GCP_SDK_VERSION }}
-  GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
-  GCP_DEPLOYER_SERVICE_ACCOUNT: ${{ vars.GCP_DEPLOYER_SERVICE_ACCOUNT }}
-  RELEASE_APP_ID: ${{ vars.RELEASE_APP_ID }}
-  RELEASE_APP_INSTALLATION_ID: ${{ vars.RELEASE_APP_INSTALLATION_ID }}
-  BROKER_ALLOWED_REPOSITORIES: ${{ vars.BROKER_ALLOWED_REPOSITORIES }}
 
 jobs:
   bootstrap:
     if: ${{ inputs.operation == 'bootstrap' }}
-    name: Bootstrap Artifact Registry
+    name: Bootstrap Broker Staging Registry
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    environment: gcp-broker-deployment
+    timeout-minutes: 15
+    environment: gcp-broker-staging
+    env:
+      GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+      GCP_REGION: ${{ vars.GCP_REGION }}
+      GCP_SDK_VERSION: ${{ vars.GCP_SDK_VERSION }}
+      GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.GCP_STAGING_WORKLOAD_IDENTITY_PROVIDER }}
+      GCP_DEPLOYER_SERVICE_ACCOUNT: ${{ vars.GCP_STAGING_DEPLOYER_SERVICE_ACCOUNT }}
+      ARTIFACT_REPOSITORY: ${{ vars.GCP_STAGING_ARTIFACT_REPOSITORY }}
     steps:
       - name: Check out source
         uses: actions/checkout@9f698171ed81b15d1823a05fc7211befd50c8ae0 # v6.0.3
+        with:
+          persist-credentials: false
 
-      - name: Require deployable configuration
+      - name: Require staging control-plane inputs
         shell: bash
         run: |
           set -euo pipefail
           test "$GITHUB_REF" = "refs/heads/develop"
-          for variable in GCP_PROJECT_ID GCP_REGION GCP_SDK_VERSION GCP_WORKLOAD_IDENTITY_PROVIDER GCP_DEPLOYER_SERVICE_ACCOUNT; do
-            test -n "${!variable:-}" || { echo "missing GitHub variable: $variable" >&2; exit 1; }
+          for variable in GCP_PROJECT_ID GCP_REGION GCP_SDK_VERSION GCP_WORKLOAD_IDENTITY_PROVIDER GCP_DEPLOYER_SERVICE_ACCOUNT ARTIFACT_REPOSITORY; do
+            test -n "${!variable:-}" || { echo "missing GitHub environment variable: $variable" >&2; exit 1; }
           done
 
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
         with:
           create_credentials_file: true
-          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
-          service_account: ${{ vars.GCP_DEPLOYER_SERVICE_ACCOUNT }}
+          workload_identity_provider: ${{ env.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ env.GCP_DEPLOYER_SERVICE_ACCOUNT }}
 
       - name: Set up Google Cloud SDK
         uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3.0.1
         with:
-          version: ${{ vars.GCP_SDK_VERSION }}
+          version: ${{ env.GCP_SDK_VERSION }}
 
-      - name: Create Docker Artifact Registry repository
+      - name: Create isolated staging Docker repository
         shell: bash
         run: |
           set -euo pipefail
@@ -74,43 +70,59 @@ jobs:
             gcloud artifacts repositories create "$ARTIFACT_REPOSITORY" \
               --repository-format=docker \
               --location="$GCP_REGION" \
-              --description="Immutable images for git-governance-release-broker" \
+              --description="Staging images for git-governance-release-broker" \
               --project="$GCP_PROJECT_ID" \
               --quiet
           fi
 
   deploy:
     if: ${{ inputs.operation == 'deploy' }}
-    name: Build and deploy broker
+    name: Build and Deploy Broker Staging
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
-    environment: gcp-broker-deployment
+    timeout-minutes: 30
+    environment: gcp-broker-staging
+    env:
+      GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+      GCP_REGION: ${{ vars.GCP_REGION }}
+      GCP_SDK_VERSION: ${{ vars.GCP_SDK_VERSION }}
+      GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.GCP_STAGING_WORKLOAD_IDENTITY_PROVIDER }}
+      GCP_DEPLOYER_SERVICE_ACCOUNT: ${{ vars.GCP_STAGING_DEPLOYER_SERVICE_ACCOUNT }}
+      ARTIFACT_REPOSITORY: ${{ vars.GCP_STAGING_ARTIFACT_REPOSITORY }}
+      BROKER_SERVICE: ${{ vars.GCP_STAGING_BROKER_SERVICE }}
+      RUNTIME_SERVICE_ACCOUNT: ${{ vars.GCP_STAGING_RUNTIME_SERVICE_ACCOUNT }}
+      INVOKER_SERVICE_ACCOUNT: ${{ vars.GCP_STAGING_INVOKER_SERVICE_ACCOUNT }}
+      BROKER_SECRET: ${{ vars.GCP_STAGING_BROKER_SECRET }}
+      BROKER_APP_ID: ${{ vars.GCP_STAGING_BROKER_APP_ID }}
+      BROKER_APP_INSTALLATION_ID: ${{ vars.GCP_STAGING_BROKER_APP_INSTALLATION_ID }}
+      BROKER_ALLOWED_REPOSITORIES: ${{ vars.GCP_STAGING_BROKER_ALLOWED_REPOSITORIES }}
     steps:
       - name: Check out source
         uses: actions/checkout@9f698171ed81b15d1823a05fc7211befd50c8ae0 # v6.0.3
+        with:
+          persist-credentials: false
 
-      - name: Require deployable configuration
+      - name: Require staging deployment inputs
         shell: bash
         run: |
           set -euo pipefail
           test "$GITHUB_REF" = "refs/heads/develop"
-          for variable in GCP_PROJECT_ID GCP_REGION GCP_SDK_VERSION GCP_WORKLOAD_IDENTITY_PROVIDER GCP_DEPLOYER_SERVICE_ACCOUNT RELEASE_APP_ID RELEASE_APP_INSTALLATION_ID BROKER_ALLOWED_REPOSITORIES; do
-            test -n "${!variable:-}" || { echo "missing GitHub variable: $variable" >&2; exit 1; }
+          for variable in GCP_PROJECT_ID GCP_REGION GCP_SDK_VERSION GCP_WORKLOAD_IDENTITY_PROVIDER GCP_DEPLOYER_SERVICE_ACCOUNT ARTIFACT_REPOSITORY BROKER_SERVICE RUNTIME_SERVICE_ACCOUNT INVOKER_SERVICE_ACCOUNT BROKER_SECRET BROKER_APP_ID BROKER_APP_INSTALLATION_ID BROKER_ALLOWED_REPOSITORIES; do
+            test -n "${!variable:-}" || { echo "missing GitHub environment variable: $variable" >&2; exit 1; }
           done
 
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
         with:
           create_credentials_file: true
-          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
-          service_account: ${{ vars.GCP_DEPLOYER_SERVICE_ACCOUNT }}
+          workload_identity_provider: ${{ env.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ env.GCP_DEPLOYER_SERVICE_ACCOUNT }}
 
       - name: Set up Google Cloud SDK
         uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3.0.1
         with:
-          version: ${{ vars.GCP_SDK_VERSION }}
+          version: ${{ env.GCP_SDK_VERSION }}
 
-      - name: Build and push immutable broker image
+      - name: Build and push immutable staging image
         id: image
         shell: bash
         run: |
@@ -128,16 +140,15 @@ jobs:
           test -n "$digest"
           echo "reference=${image%@*}@${digest}" >> "$GITHUB_OUTPUT"
 
-      - name: Deploy private Cloud Run broker
+      - name: Deploy private staging broker
         shell: bash
         run: |
           set -euo pipefail
-          runtime_service_account="broker-runtime@${GCP_PROJECT_ID}.iam.gserviceaccount.com"
           gcloud run deploy "$BROKER_SERVICE" \
             --project="$GCP_PROJECT_ID" \
             --region="$GCP_REGION" \
             --image="${{ steps.image.outputs.reference }}" \
-            --service-account="$runtime_service_account" \
+            --service-account="$RUNTIME_SERVICE_ACCOUNT" \
             --no-allow-unauthenticated \
             --ingress=all \
             --port=8080 \
@@ -148,18 +159,17 @@ jobs:
             --max-instances=1 \
             --timeout=10s \
             --execution-environment=gen2 \
-            --set-env-vars="^@^BROKER_APP_ID=${RELEASE_APP_ID}@BROKER_APP_INSTALLATION_ID=${RELEASE_APP_INSTALLATION_ID}@BROKER_CREDENTIAL_PROFILE=release-automation@BROKER_PRIVATE_KEY_PATH=/var/run/secrets/github-app/private-key.pem@BROKER_ALLOWED_REPOSITORIES=${BROKER_ALLOWED_REPOSITORIES}" \
+            --set-env-vars="^@^BROKER_APP_ID=${BROKER_APP_ID}@BROKER_APP_INSTALLATION_ID=${BROKER_APP_INSTALLATION_ID}@BROKER_CREDENTIAL_PROFILE=release-automation@BROKER_PRIVATE_KEY_PATH=/var/run/secrets/github-app/private-key.pem@BROKER_ALLOWED_REPOSITORIES=${BROKER_ALLOWED_REPOSITORIES}" \
             --update-secrets="/var/run/secrets/github-app/private-key.pem=${BROKER_SECRET}:1" \
             --quiet
 
-      - name: Grant only the broker invoker service account access
+      - name: Grant only staging invoker access
         shell: bash
         run: |
           set -euo pipefail
-          invoker_service_account="release-broker-invoker@${GCP_PROJECT_ID}.iam.gserviceaccount.com"
           gcloud run services add-iam-policy-binding "$BROKER_SERVICE" \
             --project="$GCP_PROJECT_ID" \
             --region="$GCP_REGION" \
-            --member="serviceAccount:${invoker_service_account}" \
+            --member="serviceAccount:${INVOKER_SERVICE_ACCOUNT}" \
             --role="roles/run.invoker" \
             --quiet

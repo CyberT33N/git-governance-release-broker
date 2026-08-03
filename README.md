@@ -81,22 +81,37 @@ docker build --tag git-governance-release-broker:dev .
 
 ## GCP deployment
 
-The reviewed `develop` branch contains a manual, OIDC-authenticated deployment
-workflow at `.github/workflows/gcp-deploy.yml`. It first bootstraps the Docker
-Artifact Registry repository and then builds an immutable image digest before
-deploying the private Cloud Run service.
+The deployment topology separates staging from production:
+
+```text
+develop
+→ gcp-broker-staging.yml
+→ isolated staging Broker
+
+main
+→ gcp-broker-production.yml
+→ immutable production digest
+→ release-automation Broker
+
+main
+→ gcp-reconciliation-publisher-production.yml
+→ immutable production digest
+→ reconciliation publisher Broker
+```
 
 Deployment identity setup, required non-secret GitHub variables, and the exact
-runtime IAM boundary are documented in
+runtime IAM boundaries are documented in
 [`deploy/gcp/README.md`](deploy/gcp/README.md).
 
-For Cloud Run, deploy a pinned image digest with:
+Production Cloud Run deployment requires:
 
 - Cloud Run IAM authentication required;
-- `broker-runtime` as the service identity;
+- an environment-specific runtime service identity;
 - the private key mounted from Secret Manager;
 - minimum instances set to zero;
-- a repository-specific `release-broker-invoker` as the only Cloud Run invoker.
+- an environment-specific service account as the only Cloud Run invoker;
+- a full immutable `@sha256:` image reference;
+- a `main`-bound protected GitHub Environment.
 
 ## Operational limitations
 

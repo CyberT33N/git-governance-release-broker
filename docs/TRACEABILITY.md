@@ -40,3 +40,27 @@ artifact evidence registry and production identity
 
 Those blockers prevent a full Production Supply-Chain-Fortress claim. They do
 not authorize public-network fallback or unverified release delivery.
+
+## GOV-30: Main-bound Broker deployment topology
+
+Status: Scratch exploration.
+
+Scope:
+
+```text
+separate staging environment and resources from develop
+main-bound release-automation production deployment
+main-bound reconciliation publisher production deployment
+immutable production digest-only deployment
+retirement of the develop-bound direct deployment workflow
+```
+
+External prerequisites:
+
+```text
+GitHub environments with reviewer and branch restrictions
+separate WIF, deployer, runtime, and invoker identities
+separate Artifact Registry repositories
+separate Cloud Run services and Secret Manager boundaries
+approved production image evidence lane
+```
