@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-func TestDeploymentWorkflowContracts(t *testing.T) {
+func TestWorkflowContracts(t *testing.T) {
 	root := filepath.Join("..", "..")
 	for _, testCase := range []struct {
 		name      string
@@ -46,6 +46,18 @@ func TestDeploymentWorkflowContracts(t *testing.T) {
 				"BROKER_CREDENTIAL_PROFILE=reconciliation-publisher",
 			},
 			forbidden: []string{"docker build"},
+		},
+		{
+			name: "protected shared line",
+			path: filepath.Join(".github", "workflows", "create-protected-line.yml"),
+			required: []string{
+				"github.repository == 'CyberT33N/git-governance-release-broker'",
+				"github.ref == 'refs/heads/main'",
+				"environment: release",
+				"request_id:",
+				"source=\"origin/develop\"",
+				"git push origin \"${SOURCE}:refs/heads/${TARGET}\"",
+			},
 		},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {

@@ -113,6 +113,18 @@ Production Cloud Run deployment requires:
 - a full immutable `@sha256:` image reference;
 - a `main`-bound protected GitHub Environment.
 
+## Protected release lines
+
+`release/<semver>` and `support/<major.minor>` are created only through
+`.github/workflows/create-protected-line.yml` on `main`. The workflow validates
+its request, derives a release line from `origin/develop` or a support line from
+`origin/main`, and creates the remote protected line server-side.
+
+Before dispatching it, configure a protected GitHub Environment named `release`
+that permits only `main`, requires an independent reviewer, prevents
+self-review, and disallows administrator bypass. The workflow never accepts a
+caller-selected source branch.
+
 ## Operational limitations
 
 This initial implementation supports `github.com` release automation. GitHub
