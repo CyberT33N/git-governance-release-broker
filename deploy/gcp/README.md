@@ -131,6 +131,58 @@ Its GitHub App is separate from release automation and has only the repository
 and permissions required to publish a provenance-validated reconciliation
 candidate.
 
+## Artifact promotion
+
+Production deployments never rebuild or accept a mutable tag. The following
+main-bound workflows copy a reviewed staging image by digest and emit the
+complete immutable production image reference:
+
+```text
+gcp-broker-production-promotion.yml
+→ release-broker-staging-images
+→ release-broker-production-images
+```
+
+```text
+gcp-reconciliation-publisher-promotion.yml
+→ release-broker-staging-images
+→ reconciliation-publisher-production-images
+```
+
+Each workflow accepts only `source_commit`, requires it to be a full
+lower-case Git SHA reachable from `main`, resolves only the staging tag
+`broker:sha-<source_commit>`, and verifies that the destination digest exactly
+matches the source digest. The deployment workflow consumes the emitted
+`broker@sha256:<digest>` reference, never the staging tag.
+
+Add these non-secret GitHub Environment variables before dispatching the
+promotion workflows:
+
+```text
+gcp-broker-production
+→ GCP_PRODUCTION_ARTIFACT_PROMOTION_WIF_PROVIDER
+→ GCP_PRODUCTION_ARTIFACT_PROMOTER_SERVICE_ACCOUNT
+→ GCP_PRODUCTION_SOURCE_ARTIFACT_REPOSITORY=release-broker-staging-images
+```
+
+```text
+gcp-reconciliation-publisher-deployment
+→ GCP_RECONCILIATION_PUBLISHER_ARTIFACT_PROMOTION_WIF_PROVIDER
+→ GCP_RECONCILIATION_PUBLISHER_ARTIFACT_PROMOTER_SERVICE_ACCOUNT
+→ GCP_RECONCILIATION_PUBLISHER_SOURCE_ARTIFACT_REPOSITORY=release-broker-staging-images
+```
+
+Each dedicated promoter has only:
+
+```text
+Artifact Registry Reader on release-broker-staging-images
+Artifact Registry Writer on its own production repository
+Workload Identity User on its own promoter service account
+```
+
+It receives no Cloud Run, Secret Manager, Service Account User, or GitHub App
+permission.
+
 ## External Fortress prerequisites
 
 The approved Go proxy, hermetic build image, production image promotion,

@@ -63,6 +63,14 @@ reviewed source revision
 → protected production deployment
 ```
 
+The main-bound artifact-promotion workflows resolve the staging image from the
+reviewed `sha-<commit>` tag, require that commit to be reachable from `main`,
+copy the image without rebuilding it, compare source and destination digests,
+and emit only the destination `broker@sha256:<digest>` reference. Separate
+promoter identities may read the staging repository and write only their own
+production repository; they cannot deploy Cloud Run services or read runtime
+secrets.
+
 The approved Go proxy, hermetic build image, and evidence registry have not
 yet been provisioned. Until they exist, no workflow may claim a completed
 Supply-Chain-Fortress production delivery.
