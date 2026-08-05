@@ -89,11 +89,13 @@ develop
 → isolated staging Broker
 
 main
+→ controlled immutable artifact promotion
 → gcp-broker-production.yml
 → immutable production digest
 → release-automation Broker
 
 main
+→ controlled immutable artifact promotion
 → gcp-reconciliation-publisher-production.yml
 → immutable production digest
 → reconciliation publisher Broker

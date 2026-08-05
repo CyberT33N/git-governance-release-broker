@@ -46,15 +46,28 @@ Production workflows accept only full `@sha256:` image references located in
 their configured production repository. They never build or deploy `develop`
 source.
 
+Artifact promotion is main-bound and controlled separately for each production
+identity:
+
+```text
+reviewed staging image tag sha-<commit>
+→ commit must be reachable from main
+→ dedicated promoter reads staging
+→ dedicated promoter writes one production repository
+→ source and target digest equality verified
+→ deployment receives only broker@sha256:<digest>
+```
+
 ## Consequences
 
 - The former develop-bound deployment workflow is removed.
 - Staging and production require distinct WIF, deployer, runtime, invoker,
   Artifact Registry, Cloud Run, Secret Manager, and GitHub Environment
   boundaries.
-- Production image promotion, SBOM, provenance, signatures, and attestations
-  remain external fail-closed prerequisites until the platform evidence lane is
-  provisioned.
+- Dedicated promoter identities have no Cloud Run, Secret Manager, or GitHub
+  App permissions.
+- SBOM, provenance, signatures, and attestations remain external fail-closed
+  prerequisites until the platform evidence lane is provisioned.
 - A GitHub Environment cannot be treated as a production boundary until
   required reviewers, self-review prevention, branch restrictions, and
   administrator-bypass policy are all verified.

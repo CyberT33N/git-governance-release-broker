@@ -48,6 +48,48 @@ func TestWorkflowContracts(t *testing.T) {
 			forbidden: []string{"docker build"},
 		},
 		{
+			name: "production artifact promotion",
+			path: filepath.Join(".github", "workflows", "gcp-broker-production-promotion.yml"),
+			required: []string{
+				"environment: gcp-broker-production",
+				"GCP_PRODUCTION_ARTIFACT_PROMOTION_WIF_PROVIDER",
+				"GCP_PRODUCTION_ARTIFACT_PROMOTER_SERVICE_ACCOUNT",
+				"GCP_PRODUCTION_SOURCE_ARTIFACT_REPOSITORY",
+				"test \"$GITHUB_REF\" = \"refs/heads/main\"",
+				"git merge-base --is-ancestor \"$SOURCE_COMMIT\" HEAD",
+				"docker pull \"$source_image\"",
+				"docker tag \"$source_image\" \"$target_tag\"",
+				"docker push \"$target_tag\"",
+				"test \"$target_digest\" = \"$source_digest\"",
+			},
+			forbidden: []string{
+				"docker build",
+				"gcloud run deploy",
+				"latest",
+			},
+		},
+		{
+			name: "reconciliation publisher artifact promotion",
+			path: filepath.Join(".github", "workflows", "gcp-reconciliation-publisher-promotion.yml"),
+			required: []string{
+				"environment: gcp-reconciliation-publisher-deployment",
+				"GCP_RECONCILIATION_PUBLISHER_ARTIFACT_PROMOTION_WIF_PROVIDER",
+				"GCP_RECONCILIATION_PUBLISHER_ARTIFACT_PROMOTER_SERVICE_ACCOUNT",
+				"GCP_RECONCILIATION_PUBLISHER_SOURCE_ARTIFACT_REPOSITORY",
+				"test \"$GITHUB_REF\" = \"refs/heads/main\"",
+				"git merge-base --is-ancestor \"$SOURCE_COMMIT\" HEAD",
+				"docker pull \"$source_image\"",
+				"docker tag \"$source_image\" \"$target_tag\"",
+				"docker push \"$target_tag\"",
+				"test \"$target_digest\" = \"$source_digest\"",
+			},
+			forbidden: []string{
+				"docker build",
+				"gcloud run deploy",
+				"latest",
+			},
+		},
+		{
 			name: "protected shared line",
 			path: filepath.Join(".github", "workflows", "create-protected-line.yml"),
 			required: []string{

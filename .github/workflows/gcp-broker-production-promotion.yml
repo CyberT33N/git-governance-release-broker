@@ -1,0 +1,96 @@
+name: Promote Broker Production Artifact
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_commit:
+        description: Full lower-case Git commit SHA for the reviewed staging image.
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: gcp-broker-production-artifact-promotion
+  cancel-in-progress: false
+
+jobs:
+  promote:
+    name: Promote Broker Production Artifact
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    environment: gcp-broker-production
+    env:
+      SOURCE_COMMIT: ${{ inputs.source_commit }}
+      GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+      GCP_REGION: ${{ vars.GCP_REGION }}
+      GCP_SDK_VERSION: ${{ vars.GCP_SDK_VERSION }}
+      GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.GCP_PRODUCTION_ARTIFACT_PROMOTION_WIF_PROVIDER }}
+      GCP_PROMOTER_SERVICE_ACCOUNT: ${{ vars.GCP_PRODUCTION_ARTIFACT_PROMOTER_SERVICE_ACCOUNT }}
+      SOURCE_ARTIFACT_REPOSITORY: ${{ vars.GCP_PRODUCTION_SOURCE_ARTIFACT_REPOSITORY }}
+      TARGET_ARTIFACT_REPOSITORY: ${{ vars.GCP_PRODUCTION_ARTIFACT_REPOSITORY }}
+    steps:
+      - name: Check out trusted production control plane
+        uses: actions/checkout@9f698171ed81b15d1823a05fc7211befd50c8ae0 # v6.0.3
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Require immutable promotion inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = "refs/heads/main"
+          for variable in SOURCE_COMMIT GCP_PROJECT_ID GCP_REGION GCP_SDK_VERSION GCP_WORKLOAD_IDENTITY_PROVIDER GCP_PROMOTER_SERVICE_ACCOUNT SOURCE_ARTIFACT_REPOSITORY TARGET_ARTIFACT_REPOSITORY; do
+            test -n "${!variable:-}" || { echo "missing GitHub environment variable: $variable" >&2; exit 1; }
+          done
+          [[ "$SOURCE_COMMIT" =~ ^[0-9a-f]{40}$ ]] || { echo "source_commit must be a full lower-case Git SHA" >&2; exit 1; }
+          test "$SOURCE_ARTIFACT_REPOSITORY" != "$TARGET_ARTIFACT_REPOSITORY"
+          git cat-file -e "${SOURCE_COMMIT}^{commit}"
+          git merge-base --is-ancestor "$SOURCE_COMMIT" HEAD || {
+            echo "source_commit must be reachable from main" >&2
+            exit 1
+          }
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
+        with:
+          create_credentials_file: true
+          workload_identity_provider: ${{ env.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ env.GCP_PROMOTER_SERVICE_ACCOUNT }}
+
+      - name: Set up Google Cloud SDK
+        uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3.0.1
+        with:
+          version: ${{ env.GCP_SDK_VERSION }}
+
+      - name: Promote immutable staging image without rebuild
+        id: promotion
+        shell: bash
+        run: |
+          set -euo pipefail
+          registry="${GCP_REGION}-docker.pkg.dev"
+          source_tag="${registry}/${GCP_PROJECT_ID}/${SOURCE_ARTIFACT_REPOSITORY}/broker:sha-${SOURCE_COMMIT}"
+          target_tag="${registry}/${GCP_PROJECT_ID}/${TARGET_ARTIFACT_REPOSITORY}/broker:sha-${SOURCE_COMMIT}"
+
+          source_digest="$(gcloud artifacts docker images describe "$source_tag" \
+            --project="$GCP_PROJECT_ID" \
+            --format='value(image_summary.digest)')"
+          [[ "$source_digest" =~ ^sha256:[0-9a-f]{64}$ ]] || {
+            echo "source image did not resolve to an immutable digest" >&2
+            exit 1
+          }
+
+          gcloud auth configure-docker "$registry" --quiet
+          source_image="${source_tag}@${source_digest}"
+          docker pull "$source_image"
+          docker tag "$source_image" "$target_tag"
+          docker push "$target_tag"
+
+          target_digest="$(gcloud artifacts docker images describe "$target_tag" \
+            --project="$GCP_PROJECT_ID" \
+            --format='value(image_summary.digest)')"
+          test "$target_digest" = "$source_digest"
+          echo "image=${registry}/${GCP_PROJECT_ID}/${TARGET_ARTIFACT_REPOSITORY}/broker@${target_digest}" >> "$GITHUB_OUTPUT"

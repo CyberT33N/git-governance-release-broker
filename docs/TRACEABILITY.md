@@ -64,3 +64,27 @@ separate Artifact Registry repositories
 separate Cloud Run services and Secret Manager boundaries
 approved production image evidence lane
 ```
+
+## GOV-33: Controlled production artifact promotion
+
+Status: in implementation.
+
+Scope:
+
+```text
+main-bound promotion of a reviewed staging image by full commit SHA
+dedicated release-automation and publisher promoter identities
+source commit ancestry verification against main
+source and target digest equality verification
+immutable production image output for deployment workflows
+workflow contract coverage and deployment documentation
+```
+
+External prerequisites:
+
+```text
+separate WIF providers and promoter service accounts
+Artifact Registry Reader on the staging repository
+Artifact Registry Writer on only the corresponding production repository
+non-secret promotion environment variables
+```
