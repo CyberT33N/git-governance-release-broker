@@ -33,8 +33,9 @@ const (
 type CredentialProfile string
 
 const (
-	CredentialProfileReleaseAutomation       CredentialProfile = "release-automation"
-	CredentialProfileReconciliationPublisher CredentialProfile = "reconciliation-publisher"
+	CredentialProfileReleaseAutomation          CredentialProfile = "release-automation"
+	CredentialProfileReconciliationPublisher    CredentialProfile = "reconciliation-publisher"
+	CredentialProfileHotfixPropagationPublisher CredentialProfile = "hotfix-propagation-publisher"
 )
 
 var (
@@ -136,6 +137,8 @@ func ParseCredentialProfile(value string) (CredentialProfile, error) {
 		return CredentialProfileReleaseAutomation, nil
 	case CredentialProfileReconciliationPublisher:
 		return CredentialProfileReconciliationPublisher, nil
+	case CredentialProfileHotfixPropagationPublisher:
+		return CredentialProfileHotfixPropagationPublisher, nil
 	default:
 		return "", fmt.Errorf("unsupported GitHub credential profile %q", value)
 	}
@@ -206,7 +209,7 @@ func (client *Client) installationTokenPermissions() (map[string]string, error) 
 			"contents":      "read",
 			"pull_requests": "write",
 		}, nil
-	case CredentialProfileReconciliationPublisher:
+	case CredentialProfileReconciliationPublisher, CredentialProfileHotfixPropagationPublisher:
 		return map[string]string{
 			"contents":      "write",
 			"pull_requests": "write",

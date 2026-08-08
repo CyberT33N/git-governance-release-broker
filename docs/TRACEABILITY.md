@@ -1,5 +1,24 @@
 # Traceability
 
+## GOV-43: Hotfix propagation publisher boundary
+
+Status: review pending.
+
+Scope:
+
+```text
+fixed hotfix-propagation-publisher credential profile
+separate main-bound publisher deployment workflow
+separate immutable staging-to-publisher artifact promotion workflow
+workflow-contract tests
+separate App, Secret, WIF, runtime, invoker, deployer, promoter,
+environment, Artifact Registry, and Cloud Run boundaries
+```
+
+The publisher may create only provenance-validated hotfix-propagation
+candidates and their pull requests. It receives no Actions, Workflows,
+Administration, Secrets, or Ruleset-bypass permission.
+
 ## GOV-28: Reconciliation publisher credential profiles
 
 Status: review pending.

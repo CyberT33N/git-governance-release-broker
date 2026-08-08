@@ -47,6 +47,10 @@ developer workstation, or written to logs.
     `pull_requests: write`;
   - `reconciliation-publisher`: `contents: write` and
     `pull_requests: write`, without an Actions permission request.
+  - `hotfix-propagation-publisher`: `contents: write` and
+    `pull_requests: write`, without an Actions permission request. It uses a
+    separate GitHub App installation and is limited to reviewed
+    hotfix-propagation candidates.
   The HTTP request never selects a profile or GitHub permission.
 - `BROKER_PRIVATE_KEY_PATH` is required and contains the mounted PEM file
   path.
@@ -97,6 +101,11 @@ main
 → gcp-reconciliation-publisher-production.yml
 → immutable production digest
 → reconciliation publisher Broker
+
+main
+→ gcp-hotfix-propagation-publisher-production.yml
+→ immutable production digest
+→ hotfix propagation publisher Broker
 ```
 
 Deployment identity setup, required non-secret GitHub variables, and the exact

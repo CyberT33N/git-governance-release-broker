@@ -2,7 +2,7 @@
 
 ## Deployment lanes
 
-The Broker has three separate deployment lanes:
+The Broker has four separate deployment lanes:
 
 ```text
 develop
@@ -19,6 +19,11 @@ main
 → gcp-reconciliation-publisher-deployment
 → immutable digest from the publisher production repository
 → production reconciliation-publisher broker
+
+main
+→ gcp-hotfix-propagation-publisher-deployment
+→ immutable digest from the dedicated publisher production repository
+→ production hotfix-propagation-publisher broker
 ```
 
 The former develop-bound `gcp-broker-deployment` workflow is retired. A
@@ -42,6 +47,12 @@ gcp-broker-production
 → administrator bypass disabled
 
 gcp-reconciliation-publisher-deployment
+→ selected branch: main
+→ required reviewers
+→ prevent self-review
+→ administrator bypass disabled
+
+gcp-hotfix-propagation-publisher-deployment
 → selected branch: main
 → required reviewers
 → prevent self-review
@@ -130,6 +141,56 @@ BROKER_CREDENTIAL_PROFILE=reconciliation-publisher
 Its GitHub App is separate from release automation and has only the repository
 and permissions required to publish a provenance-validated reconciliation
 candidate.
+
+## Hotfix propagation publisher resources
+
+The `gcp-hotfix-propagation-publisher-production.yml` workflow requires:
+
+```text
+GCP_PROJECT_ID
+GCP_REGION
+GCP_SDK_VERSION
+GCP_HOTFIX_PROPAGATION_PUBLISHER_DEPLOYMENT_WORKLOAD_IDENTITY_PROVIDER
+GCP_HOTFIX_PROPAGATION_PUBLISHER_DEPLOYMENT_SERVICE_ACCOUNT
+GCP_HOTFIX_PROPAGATION_PUBLISHER_ARTIFACT_REPOSITORY
+GCP_HOTFIX_PROPAGATION_PUBLISHER_BROKER_SERVICE
+GCP_HOTFIX_PROPAGATION_PUBLISHER_RUNTIME_SERVICE_ACCOUNT
+GCP_HOTFIX_PROPAGATION_PUBLISHER_INVOKER_SERVICE_ACCOUNT
+GCP_HOTFIX_PROPAGATION_PUBLISHER_BROKER_SECRET
+GCP_HOTFIX_PROPAGATION_PUBLISHER_BROKER_APP_ID
+GCP_HOTFIX_PROPAGATION_PUBLISHER_BROKER_APP_INSTALLATION_ID
+GCP_HOTFIX_PROPAGATION_PUBLISHER_BROKER_ALLOWED_REPOSITORIES
+```
+
+The broker always runs:
+
+```text
+BROKER_CREDENTIAL_PROFILE=hotfix-propagation-publisher
+```
+
+Its GitHub App, Secret Manager key, Cloud Run service, WIF provider, runtime,
+invoker, deployer, promoter, environment, and Artifact Registry repository are
+separate from release automation and reconciliation publication. The App may
+request only `contents: write` and `pull_requests: write` for the approved
+repository; it receives no Actions, Workflows, Administration, Secrets, or
+Ruleset-bypass permission.
+
+## Hotfix publisher artifact promotion
+
+`gcp-hotfix-propagation-publisher-promotion.yml` is main-bound and copies a
+reviewed staging digest into the dedicated hotfix publisher repository without
+rebuilding it. It requires:
+
+```text
+GCP_HOTFIX_PROPAGATION_PUBLISHER_ARTIFACT_PROMOTION_WIF_PROVIDER
+GCP_HOTFIX_PROPAGATION_PUBLISHER_ARTIFACT_PROMOTER_SERVICE_ACCOUNT
+GCP_HOTFIX_PROPAGATION_PUBLISHER_SOURCE_ARTIFACT_REPOSITORY=release-broker-staging-images
+GCP_HOTFIX_PROPAGATION_PUBLISHER_ARTIFACT_REPOSITORY
+```
+
+The promoter may read only the staging repository and write only the dedicated
+hotfix publisher repository. It receives no Cloud Run, Secret Manager, Service
+Account User, or GitHub App permission.
 
 ## External Fortress prerequisites
 
