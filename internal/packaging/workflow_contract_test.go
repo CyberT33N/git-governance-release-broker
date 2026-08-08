@@ -48,6 +48,38 @@ func TestWorkflowContracts(t *testing.T) {
 			forbidden: []string{"docker build"},
 		},
 		{
+			name: "hotfix propagation publisher",
+			path: filepath.Join(".github", "workflows", "gcp-hotfix-propagation-publisher-production.yml"),
+			required: []string{
+				"environment: gcp-hotfix-propagation-publisher-deployment",
+				"test \"$GITHUB_REF\" = \"refs/heads/main\"",
+				"@sha256:",
+				"BROKER_CREDENTIAL_PROFILE=hotfix-propagation-publisher",
+			},
+			forbidden: []string{"docker build"},
+		},
+		{
+			name: "hotfix propagation publisher artifact promotion",
+			path: filepath.Join(".github", "workflows", "gcp-hotfix-propagation-publisher-promotion.yml"),
+			required: []string{
+				"environment: gcp-hotfix-propagation-publisher-deployment",
+				"GCP_HOTFIX_PROPAGATION_PUBLISHER_ARTIFACT_PROMOTION_WIF_PROVIDER",
+				"GCP_HOTFIX_PROPAGATION_PUBLISHER_ARTIFACT_PROMOTER_SERVICE_ACCOUNT",
+				"GCP_HOTFIX_PROPAGATION_PUBLISHER_SOURCE_ARTIFACT_REPOSITORY",
+				"test \"$GITHUB_REF\" = \"refs/heads/main\"",
+				"git merge-base --is-ancestor \"$SOURCE_COMMIT\" HEAD",
+				"docker pull \"$source_image\"",
+				"docker tag \"$source_image\" \"$target_tag\"",
+				"docker push \"$target_tag\"",
+				"test \"$target_digest\" = \"$source_digest\"",
+			},
+			forbidden: []string{
+				"docker build",
+				"gcloud run deploy",
+				"latest",
+			},
+		},
+		{
 			name: "protected shared line",
 			path: filepath.Join(".github", "workflows", "create-protected-line.yml"),
 			required: []string{

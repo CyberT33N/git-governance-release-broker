@@ -65,6 +65,7 @@ func TestParseCredentialProfile(t *testing.T) {
 		{name: "default", want: CredentialProfileReleaseAutomation, ok: true},
 		{name: "release automation", value: string(CredentialProfileReleaseAutomation), want: CredentialProfileReleaseAutomation, ok: true},
 		{name: "reconciliation publisher", value: string(CredentialProfileReconciliationPublisher), want: CredentialProfileReconciliationPublisher, ok: true},
+		{name: "hotfix propagation publisher", value: string(CredentialProfileHotfixPropagationPublisher), want: CredentialProfileHotfixPropagationPublisher, ok: true},
 		{name: "invalid", value: "untrusted"},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -135,6 +136,14 @@ func TestMintRequestsRepositoryBoundInstallationToken(t *testing.T) {
 		{
 			name:    "reconciliation publisher",
 			profile: CredentialProfileReconciliationPublisher,
+			permissions: map[string]string{
+				"contents":      "write",
+				"pull_requests": "write",
+			},
+		},
+		{
+			name:    "hotfix propagation publisher",
+			profile: CredentialProfileHotfixPropagationPublisher,
 			permissions: map[string]string{
 				"contents":      "write",
 				"pull_requests": "write",

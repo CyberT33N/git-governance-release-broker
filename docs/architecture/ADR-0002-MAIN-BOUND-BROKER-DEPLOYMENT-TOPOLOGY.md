@@ -11,11 +11,12 @@ The original Broker deployment workflow built and deployed directly from
 Cloud Run service. That makes unpromoted integration source a production
 deployment authority.
 
-The Broker includes two materially different production identities:
+The Broker includes three materially different production identities:
 
 ```text
 release-automation
 reconciliation-publisher
+hotfix-propagation-publisher
 ```
 
 They must not share an App key, runtime identity, deployment identity, or
@@ -40,6 +41,11 @@ main
 → protected reconciliation publisher environment
 → immutable publisher digest
 → reconciliation publisher Broker service
+
+main
+→ protected hotfix propagation publisher environment
+→ immutable publisher digest
+→ hotfix propagation publisher Broker service
 ```
 
 Production workflows accept only full `@sha256:` image references located in

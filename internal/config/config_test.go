@@ -53,7 +53,7 @@ func TestLoadRejectsInvalidValues(t *testing.T) {
 		EnvAllowedRepositories:  "github.com/CyberT33N/git-governance",
 		EnvBrokerAppID:          "1",
 		EnvBrokerInstallationID: "2",
-		EnvCredentialProfile:    string(githubapp.CredentialProfileReconciliationPublisher),
+		EnvCredentialProfile:    string(githubapp.CredentialProfileHotfixPropagationPublisher),
 		EnvBrokerPrivateKeyPath: "/key.pem",
 	}
 
@@ -99,8 +99,8 @@ func TestLoadRejectsInvalidValues(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load() error = %v", err)
 	}
-	if configuration.CredentialProfile != githubapp.CredentialProfileReconciliationPublisher {
-		t.Fatalf("CredentialProfile = %q, want %q", configuration.CredentialProfile, githubapp.CredentialProfileReconciliationPublisher)
+	if configuration.CredentialProfile != githubapp.CredentialProfileHotfixPropagationPublisher {
+		t.Fatalf("CredentialProfile = %q, want %q", configuration.CredentialProfile, githubapp.CredentialProfileHotfixPropagationPublisher)
 	}
 }
 
