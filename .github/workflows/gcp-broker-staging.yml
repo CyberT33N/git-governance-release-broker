@@ -50,12 +50,10 @@ jobs:
             test -n "${!variable:-}" || { echo "missing GitHub environment variable: $variable" >&2; exit 1; }
           done
 
-      - id: auth
-        name: Authenticate to Google Cloud
+      - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
         with:
           create_credentials_file: true
-          token_format: access_token
           workload_identity_provider: ${{ env.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ env.GCP_DEPLOYER_SERVICE_ACCOUNT }}
 
@@ -125,10 +123,12 @@ jobs:
             test -n "${!variable:-}" || { echo "missing GitHub environment variable: $variable" >&2; exit 1; }
           done
 
-      - name: Authenticate to Google Cloud
+      - id: auth
+        name: Authenticate to Google Cloud
         uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
         with:
           create_credentials_file: true
+          token_format: access_token
           workload_identity_provider: ${{ env.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ env.GCP_DEPLOYER_SERVICE_ACCOUNT }}
 
