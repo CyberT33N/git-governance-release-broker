@@ -25,9 +25,11 @@ It verifies the Go module, formatting, tests, complete statement coverage,
 race safety, static analysis, Linux AMD64 binary build, embedded module
 provenance, and fuzz smoke tests.
 
-Container build, SBOM, provenance, signature, and attestation verification are
-added only after the approved internal Go proxy, hermetic build image, and
-artifact evidence registry exist.
+Container delivery requires a signed immutable digest, SPDX SBOM, provenance,
+SBOM attestation, and immutable evidence-package verification before production
+deployment. The approved internal Go proxy, hermetic build image, and
+lane-specific artifact evidence repositories remain external prerequisites;
+their absence fails the delivery path closed.
 
 Windows and macOS runtime checks are not required Broker release gates. They
 do not validate the deployed Cloud Run artifact and must not remain stale

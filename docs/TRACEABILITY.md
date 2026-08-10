@@ -1,8 +1,28 @@
 # Traceability
 
-## GOV-53: Superseded broker release candidate 1.0.0
+## GOV-54: Broker container evidence gate
 
 Status: in implementation.
+
+Scope:
+
+```text
+SPDX SBOM for every immutable staging image digest
+keyless Sigstore container signature
+GitHub provenance and SBOM attestations attached to the digest
+immutable generic evidence package
+promotion-time signature, provenance, and SBOM verification
+deployment-time evidence verification before Cloud Run mutation
+lane-specific evidence repositories and IAM documentation
+```
+
+The evidence package is versioned by the image digest and is immutable. A
+promotion or production deployment fails closed when the package, signature,
+provenance, or SPDX attestation is missing, mismatched, or unverifiable.
+
+## GOV-53: Superseded broker release candidate 1.0.0
+
+Status: review pending.
 
 The protected candidate `release/1.0.0` is a pre-delivery candidate, not a
 released version:

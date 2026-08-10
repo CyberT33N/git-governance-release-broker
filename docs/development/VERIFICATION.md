@@ -40,8 +40,9 @@ and HTTP request boundaries, then verifies the Linux AMD64 source binary.
 
 ## External Fortress prerequisites
 
-The following production controls are intentionally fail-closed until their
-platform infrastructure is provisioned:
+The workflow contract generates and verifies container SBOM, keyless signature,
+provenance, attestation, and immutable evidence packages. The following
+platform controls remain intentionally fail-closed until provisioned:
 
 ```text
 approved internal Go proxy

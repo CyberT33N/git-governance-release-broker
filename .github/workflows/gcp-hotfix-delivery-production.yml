@@ -9,6 +9,7 @@ on:
         type: string
 
 permissions:
+  attestations: read
   contents: read
   id-token: write
 
@@ -30,6 +31,7 @@ jobs:
       GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.GCP_HOTFIX_DELIVERY_DEPLOYMENT_WORKLOAD_IDENTITY_PROVIDER }}
       GCP_DEPLOYER_SERVICE_ACCOUNT: ${{ vars.GCP_HOTFIX_DELIVERY_DEPLOYMENT_SERVICE_ACCOUNT }}
       ARTIFACT_REPOSITORY: ${{ vars.GCP_HOTFIX_DELIVERY_ARTIFACT_REPOSITORY }}
+      EVIDENCE_ARTIFACT_REPOSITORY: ${{ vars.GCP_HOTFIX_DELIVERY_EVIDENCE_ARTIFACT_REPOSITORY }}
       BROKER_SERVICE: ${{ vars.GCP_HOTFIX_DELIVERY_BROKER_SERVICE }}
       RUNTIME_SERVICE_ACCOUNT: ${{ vars.GCP_HOTFIX_DELIVERY_RUNTIME_SERVICE_ACCOUNT }}
       INVOKER_SERVICE_ACCOUNT: ${{ vars.GCP_HOTFIX_DELIVERY_INVOKER_SERVICE_ACCOUNT }}
@@ -48,7 +50,7 @@ jobs:
         run: |
           set -euo pipefail
           test "$GITHUB_REF" = "refs/heads/main"
-          for variable in IMAGE GCP_PROJECT_ID GCP_REGION GCP_SDK_VERSION GCP_WORKLOAD_IDENTITY_PROVIDER GCP_DEPLOYER_SERVICE_ACCOUNT ARTIFACT_REPOSITORY BROKER_SERVICE RUNTIME_SERVICE_ACCOUNT INVOKER_SERVICE_ACCOUNT BROKER_SECRET BROKER_APP_ID BROKER_APP_INSTALLATION_ID BROKER_ALLOWED_REPOSITORIES; do
+          for variable in IMAGE GCP_PROJECT_ID GCP_REGION GCP_SDK_VERSION GCP_WORKLOAD_IDENTITY_PROVIDER GCP_DEPLOYER_SERVICE_ACCOUNT ARTIFACT_REPOSITORY EVIDENCE_ARTIFACT_REPOSITORY BROKER_SERVICE RUNTIME_SERVICE_ACCOUNT INVOKER_SERVICE_ACCOUNT BROKER_SECRET BROKER_APP_ID BROKER_APP_INSTALLATION_ID BROKER_ALLOWED_REPOSITORIES; do
             test -n "${!variable:-}" || { echo "missing GitHub environment variable: $variable" >&2; exit 1; }
           done
           expected_prefix="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${ARTIFACT_REPOSITORY}/broker@sha256:"
@@ -75,6 +77,16 @@ jobs:
         uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3.0.1
         with:
           version: ${{ env.GCP_SDK_VERSION }}
+
+      - name: Verify immutable hotfix delivery evidence
+        uses: ./.github/actions/verify-broker-evidence
+        with:
+          image: ${{ env.IMAGE }}
+          project-id: ${{ env.GCP_PROJECT_ID }}
+          region: ${{ env.GCP_REGION }}
+          evidence-repository: ${{ env.EVIDENCE_ARTIFACT_REPOSITORY }}
+          signer-workflow: .github/workflows/gcp-broker-staging.yml
+          source-ref: refs/heads/develop
 
       - name: Verify immutable hotfix delivery image exists
         shell: bash

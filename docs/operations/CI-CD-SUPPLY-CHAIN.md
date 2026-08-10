@@ -57,15 +57,21 @@ reviewed source revision
 → approved Go module graph
 → hermetic Linux AMD64 build
 → immutable container digest
-→ SBOM
-→ vulnerability and policy evidence
-→ provenance, signature, and attestation
+→ SPDX SBOM
+→ keyless Sigstore signature
+→ GitHub provenance and SBOM attestations
+→ immutable generic evidence package
+→ promotion-time evidence verification
+→ deployment-time evidence verification
 → protected production deployment
 ```
 
-The approved Go proxy, hermetic build image, and evidence registry have not
-yet been provisioned. Until they exist, no workflow may claim a completed
-Supply-Chain-Fortress production delivery.
+The source contract signs and attests a staging digest, then copies an
+immutable evidence package with that digest to each production lane. The
+approved Go proxy, hermetic build image, lane-specific generic evidence
+repositories, and their IAM boundaries remain external prerequisites. Until
+they exist, no workflow may claim a completed Supply-Chain-Fortress production
+delivery.
 
 ## Superseded pre-delivery candidates
 
@@ -108,6 +114,12 @@ gcp-hotfix-propagation-publisher-deployment
 The six environments, service identities, secrets, image repositories, and
 Cloud Run services must remain separate. No deployer, runtime, or invoker
 identity receives permissions across those boundaries.
+
+Every production lane also owns a generic evidence repository. A promoter may
+read only the staging image and staging evidence repositories, then write only
+the lane's image and evidence repositories. A deployer may read only its
+lane's evidence repository and the staging image repository needed to
+re-validate the source signature and attestations.
 
 ## Incident handling
 
