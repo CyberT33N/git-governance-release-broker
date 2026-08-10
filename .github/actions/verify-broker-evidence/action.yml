@@ -54,10 +54,18 @@ runs:
         test "$digest" = "$(printf '%s' "$digest" | tr -cd '0-9a-f')"
 
         registry="${GCP_REGION}-docker.pkg.dev"
-        gcloud auth configure-docker "$registry" --quiet
-
         evidence_directory="$(mktemp -d)"
-        trap 'rm -rf "$evidence_directory"' EXIT
+        docker_config="$(mktemp -d)"
+        export DOCKER_CONFIG="$docker_config"
+        cleanup() {
+          docker logout "$registry" >/dev/null 2>&1 || true
+          rm -rf "$docker_config" "$evidence_directory"
+        }
+        trap cleanup EXIT
+        access_token="$(gcloud auth print-access-token)"
+        printf '%s' "$access_token" | docker login "$registry" --username oauth2accesstoken --password-stdin >/dev/null
+        unset access_token
+
         gcloud artifacts generic download \
           --project="$GCP_PROJECT_ID" \
           --location="$GCP_REGION" \
