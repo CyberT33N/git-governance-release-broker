@@ -67,6 +67,18 @@ The approved Go proxy, hermetic build image, and evidence registry have not
 yet been provisioned. Until they exist, no workflow may claim a completed
 Supply-Chain-Fortress production delivery.
 
+## Superseded pre-delivery candidates
+
+A protected release candidate is not delivered merely because its ref exists.
+If a candidate becomes an ancestor of `main` before its promotion and has no
+immutable tag, published release, or delivery evidence, it is recorded as
+`superseded-before-delivery`.
+
+Such a candidate must not receive retrospective artifacts, SBOMs, signatures,
+attestations, tags, or GitHub Releases. Its ref remains available for audit
+until a successor release has completed delivery and a controlled retention
+decision permits cleanup.
+
 ## Deployment topology
 
 The staging deployment workflow is develop-bound and builds only the isolated

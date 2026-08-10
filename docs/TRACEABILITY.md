@@ -1,8 +1,39 @@
 # Traceability
 
-## GOV-52: Release credential verification and hotfix delivery source gates
+## GOV-53: Superseded broker release candidate 1.0.0
 
 Status: in implementation.
+
+The protected candidate `release/1.0.0` is a pre-delivery candidate, not a
+released version:
+
+```text
+release ref:
+release/1.0.0
+
+candidate tip and current merge base:
+f626600f3ab128e1a7dab271de8b1eab3bb071d3
+
+main-only commits:
+GOV-31 main baseline
+GOV-33 controlled artifact promotion
+
+published GitHub releases and v* tags:
+none
+```
+
+The candidate is `superseded-before-delivery`, not `not-required`. The latter
+is reserved for a post-delivery reconciliation with no effective delta.
+
+No retrospective promotion, tag, artifact publication, signature, attestation,
+or GitHub Release may be created for `release/1.0.0`. Its successor will be a
+new release line with a new version; the existing ref remains retained until
+the successor completes delivery and its retention and controlled cleanup
+conditions are recorded.
+
+## GOV-52: Release credential verification and hotfix delivery source gates
+
+Status: integrated into develop through PR #22.
 
 Scope:
 
