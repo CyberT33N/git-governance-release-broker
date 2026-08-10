@@ -1,8 +1,21 @@
 # Traceability
 
-## GOV-61: Authenticate registry attestations
+## GOV-62: Bind staging registry authentication to deploy job
 
 Status: in implementation.
+
+Scope:
+
+```text
+Emit the short-lived Artifact Registry access token in the deploy job that
+consumes it. Keep bootstrap authenticated for registry provisioning without a
+deploy-only token output, and lock the job-local output and ordering contract
+with same-package workflow tests.
+```
+
+## GOV-61: Authenticate registry attestations
+
+Status: integrated into develop; staging deployment remediation continues in GOV-62.
 
 Scope:
 

@@ -427,21 +427,42 @@ func TestAttestationRegistryAuthUsesShortLivedStaticDockerCredentials(t *testing
 		t.Fatalf("ReadFile(%q) error = %v", stagingPath, err)
 	}
 
-	stagingWorkflow := string(stagingContents)
-	authIndex := strings.Index(stagingWorkflow, "- id: auth")
+	stagingWorkflow := strings.ReplaceAll(string(stagingContents), "\r\n", "\n")
+	bootstrapIndex := strings.Index(stagingWorkflow, "\n  bootstrap:\n")
+	if bootstrapIndex < 0 {
+		t.Fatal("staging workflow is missing the bootstrap job")
+	}
+	deployIndex := strings.Index(stagingWorkflow, "\n  deploy:\n")
+	if deployIndex < 0 {
+		t.Fatal("staging workflow is missing the deploy job")
+	}
+	if bootstrapIndex > deployIndex {
+		t.Fatal("staging workflow declares the deploy job before bootstrap")
+	}
+
+	bootstrapJob := stagingWorkflow[bootstrapIndex:deployIndex]
+	if strings.Contains(bootstrapJob, "- id: auth") {
+		t.Fatal("bootstrap job exposes a deploy-only authentication output")
+	}
+	if strings.Contains(bootstrapJob, "token_format: access_token") {
+		t.Fatal("bootstrap job requests a deploy-only access token")
+	}
+
+	deployJob := stagingWorkflow[deployIndex:]
+	authIndex := strings.Index(deployJob, "- id: auth")
 	if authIndex < 0 {
-		t.Fatal("staging workflow is missing the access-token authentication step")
+		t.Fatal("deploy job is missing the access-token authentication step")
 	}
-	loginIndex := strings.Index(stagingWorkflow, "- name: Authenticate Docker client to Artifact Registry")
+	loginIndex := strings.Index(deployJob, "- name: Authenticate Docker client to Artifact Registry")
 	if loginIndex < 0 {
-		t.Fatal("staging workflow is missing static Docker registry authentication")
+		t.Fatal("deploy job is missing static Docker registry authentication")
 	}
-	buildIndex := strings.Index(stagingWorkflow, "- name: Build and push immutable staging image")
+	buildIndex := strings.Index(deployJob, "- name: Build and push immutable staging image")
 	if buildIndex < 0 {
-		t.Fatal("staging workflow is missing the image build step")
+		t.Fatal("deploy job is missing the image build step")
 	}
 	if authIndex > loginIndex || loginIndex > buildIndex {
-		t.Fatal("staging registry authentication is not ordered before the image build")
+		t.Fatal("deploy registry authentication is not ordered before the image build")
 	}
 	for _, required := range []string{
 		"token_format: access_token",
@@ -450,8 +471,8 @@ func TestAttestationRegistryAuthUsesShortLivedStaticDockerCredentials(t *testing
 		"password: ${{ steps.auth.outputs.access_token }}",
 		"logout: true",
 	} {
-		if !strings.Contains(stagingWorkflow, required) {
-			t.Fatalf("staging workflow is missing %q", required)
+		if !strings.Contains(deployJob, required) {
+			t.Fatalf("deploy job is missing %q", required)
 		}
 	}
 	if strings.Contains(stagingWorkflow, "gcloud auth configure-docker") {
