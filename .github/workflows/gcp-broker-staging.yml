@@ -177,6 +177,7 @@ jobs:
         shell: bash
         env:
           IMAGE: ${{ steps.image.outputs.reference }}
+          COSIGN_EXPERIMENTAL: "1"
         run: |
           set -euo pipefail
           identity="https://github.com/${GITHUB_REPOSITORY}/.github/workflows/gcp-broker-staging.yml@refs/heads/develop"

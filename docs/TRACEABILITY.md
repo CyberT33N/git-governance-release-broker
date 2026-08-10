@@ -1,5 +1,19 @@
 # Traceability
 
+## GOV-56: Enable Cosign OCI referrers
+
+Status: in implementation.
+
+Scope:
+
+```text
+Enable COSIGN_EXPERIMENTAL=1 only in the staging signing step and the
+read-only composite evidence verifier that use OCI 1.1 referrers.
+Keep the experimental mode out of unrelated workflow steps and GitHub
+Environment variables.
+Lock both scoped settings with same-package workflow contract tests.
+```
+
 ## GOV-55: Prepare staging evidence workspace
 
 Status: in implementation.

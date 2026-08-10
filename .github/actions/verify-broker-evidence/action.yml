@@ -45,6 +45,7 @@ runs:
         EVIDENCE_ARTIFACT_REPOSITORY: ${{ inputs.evidence-repository }}
         SIGNER_WORKFLOW: ${{ inputs.signer-workflow }}
         SOURCE_REF: ${{ inputs.source-ref }}
+        COSIGN_EXPERIMENTAL: "1"
       run: |
         set -euo pipefail
         digest="${IMAGE##*@sha256:}"
