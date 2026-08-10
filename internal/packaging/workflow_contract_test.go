@@ -27,9 +27,15 @@ func TestWorkflowContracts(t *testing.T) {
 				"GCP_STAGING_EVIDENCE_ARTIFACT_REPOSITORY",
 				"anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610",
 				"actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6",
-				"cosign sign --yes --registry-referrers-mode=oci-1-1",
-				"COSIGN_EXPERIMENTAL: \"1\"",
+				"sigstore/cosign-installer@4959ce089c160fddf62f7b42464195ba1a56d382",
+				"cosign-release: v3.1.3",
+				"cosign sign --yes \"$IMAGE\"",
 				"gcloud artifacts generic upload",
+			},
+			forbidden: []string{
+				"COSIGN_EXPERIMENTAL",
+				"--registry-referrers-mode",
+				"--experimental-oci11",
 			},
 		},
 		{
@@ -37,6 +43,7 @@ func TestWorkflowContracts(t *testing.T) {
 			path: filepath.Join(".github", "actions", "verify-broker-evidence", "action.yml"),
 			required: []string{
 				"sigstore/cosign-installer@4959ce089c160fddf62f7b42464195ba1a56d382",
+				"cosign-release: v3.1.3",
 				"gcloud artifacts generic download",
 				"cosign verify",
 				"gh attestation verify",
@@ -44,7 +51,6 @@ func TestWorkflowContracts(t *testing.T) {
 				"--bundle-from-oci",
 				"--deny-self-hosted-runners",
 				"--source-digest",
-				"COSIGN_EXPERIMENTAL: \"1\"",
 				"provenance_bundle_sha256",
 				"sbom_bundle_sha256",
 			},
@@ -52,6 +58,9 @@ func TestWorkflowContracts(t *testing.T) {
 				"cosign sign",
 				"docker build",
 				"gcloud run deploy",
+				"COSIGN_EXPERIMENTAL",
+				"--registry-referrers-mode",
+				"--experimental-oci11",
 			},
 		},
 		{
@@ -310,7 +319,7 @@ func TestStagingWorkflowPreparesEvidenceWorkspaceBeforeSBOM(t *testing.T) {
 	}
 }
 
-func TestCosignOCIReferrerModeUsesCompatibleVerifyDiscovery(t *testing.T) {
+func TestCosignV3UsesBundleDefaults(t *testing.T) {
 	stagingPath := filepath.Join("..", "..", ".github", "workflows", "gcp-broker-staging.yml")
 	stagingContents, err := os.ReadFile(stagingPath)
 	if err != nil {
@@ -327,14 +336,17 @@ func TestCosignOCIReferrerModeUsesCompatibleVerifyDiscovery(t *testing.T) {
 		t.Fatal("staging workflow is missing the provenance step after Cosign")
 	}
 	signatureStep := stagingWorkflow[signatureStepStart : signatureStepStart+signatureStepEnd]
-	if !strings.Contains(signatureStep, "COSIGN_EXPERIMENTAL: \"1\"") {
-		t.Fatal("staging Cosign signature step is missing step-scoped experimental mode")
+	if !strings.Contains(stagingWorkflow, "cosign-release: v3.1.3") {
+		t.Fatal("staging workflow does not pin Cosign v3.1.3")
 	}
-	if !strings.Contains(signatureStep, "cosign sign --yes --registry-referrers-mode=oci-1-1 \"$IMAGE\"") {
-		t.Fatal("staging Cosign signature step is missing the OCI referrers signing mode")
+	if !strings.Contains(signatureStep, "cosign sign --yes \"$IMAGE\"") {
+		t.Fatal("staging workflow does not use the Cosign v3 bundle signing default")
 	}
-	if strings.Contains(stagingWorkflow[:signatureStepStart], "COSIGN_EXPERIMENTAL") {
-		t.Fatal("staging workflow enables experimental Cosign mode outside the signature step")
+	if strings.Contains(stagingWorkflow, "COSIGN_EXPERIMENTAL") {
+		t.Fatal("staging workflow retains experimental Cosign mode")
+	}
+	if strings.Contains(stagingWorkflow, "--registry-referrers-mode") {
+		t.Fatal("staging workflow retains deprecated OCI referrer mode")
 	}
 	stagingVerifyStart := strings.Index(signatureStep, "cosign verify \\")
 	if stagingVerifyStart < 0 {
@@ -348,8 +360,8 @@ func TestCosignOCIReferrerModeUsesCompatibleVerifyDiscovery(t *testing.T) {
 	if strings.Contains(stagingVerify, "--registry-referrers-mode") {
 		t.Fatal("staging Cosign verification uses unsupported OCI referrers mode")
 	}
-	if !strings.Contains(stagingVerify, "--experimental-oci11") {
-		t.Fatal("staging Cosign verification does not enable OCI 1.1 discovery")
+	if strings.Contains(stagingVerify, "--experimental-oci11") {
+		t.Fatal("staging Cosign verification retains removed OCI 1.1 discovery mode")
 	}
 
 	verifierPath := filepath.Join("..", "..", ".github", "actions", "verify-broker-evidence", "action.yml")
@@ -363,11 +375,14 @@ func TestCosignOCIReferrerModeUsesCompatibleVerifyDiscovery(t *testing.T) {
 	if verificationStepStart < 0 {
 		t.Fatal("evidence verifier is missing the Cosign verification step")
 	}
-	if !strings.Contains(verifier[verificationStepStart:], "COSIGN_EXPERIMENTAL: \"1\"") {
-		t.Fatal("evidence verifier is missing step-scoped experimental mode")
+	if !strings.Contains(verifier, "cosign-release: v3.1.3") {
+		t.Fatal("evidence verifier does not pin Cosign v3.1.3")
 	}
-	if strings.Contains(verifier[:verificationStepStart], "COSIGN_EXPERIMENTAL") {
-		t.Fatal("evidence verifier enables experimental Cosign mode outside the verification step")
+	if strings.Contains(verifier, "COSIGN_EXPERIMENTAL") {
+		t.Fatal("evidence verifier retains experimental Cosign mode")
+	}
+	if strings.Contains(verifier, "--registry-referrers-mode") {
+		t.Fatal("evidence verifier retains deprecated OCI referrer mode")
 	}
 	verifierVerifyStart := strings.Index(verifier[verificationStepStart:], "cosign verify \\")
 	if verifierVerifyStart < 0 {
@@ -382,7 +397,7 @@ func TestCosignOCIReferrerModeUsesCompatibleVerifyDiscovery(t *testing.T) {
 	if strings.Contains(verifierVerify, "--registry-referrers-mode") {
 		t.Fatal("evidence verifier uses unsupported OCI referrers mode")
 	}
-	if !strings.Contains(verifierVerify, "--experimental-oci11") {
-		t.Fatal("evidence verifier does not enable OCI 1.1 discovery")
+	if strings.Contains(verifierVerify, "--experimental-oci11") {
+		t.Fatal("evidence verifier retains removed OCI 1.1 discovery mode")
 	}
 }
