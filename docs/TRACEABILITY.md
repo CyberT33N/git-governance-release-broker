@@ -1,8 +1,21 @@
 # Traceability
 
-## GOV-58: Enable Cosign verify OCI discovery
+## GOV-59: Upgrade Cosign v3 evidence workflows
 
 Status: in implementation.
+
+Scope:
+
+```text
+Pin both evidence workflow installation points to Cosign v3.1.3. Adopt the
+v3 bundle defaults for image signing and verification by removing obsolete
+experimental OCI mode and referrer-discovery flags. Lock the v3 command
+contract with same-package workflow tests.
+```
+
+## GOV-58: Enable Cosign verify OCI discovery
+
+Status: integrated into develop through PR #31.
 
 Scope:
 

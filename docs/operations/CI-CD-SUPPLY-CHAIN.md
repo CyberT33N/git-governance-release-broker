@@ -73,6 +73,19 @@ repositories, and their IAM boundaries remain external prerequisites. Until
 they exist, no workflow may claim a completed Supply-Chain-Fortress production
 delivery.
 
+## Cosign v3 evidence contract
+
+The staging signer and composite evidence verifier explicitly install Cosign
+`v3.1.3`. The installer action release and the installed Cosign binary version
+are separate contracts; the workflow must set `cosign-release` explicitly.
+
+Cosign v3 uses bundle-based OCI evidence by default. The broker workflows use
+that default and do not retain the former experimental OCI environment setting,
+the sign-only referrer-mode override, or the removed verify discovery flag.
+Any future Cosign upgrade requires a new governed compatibility review of the
+signing, verification, SBOM, provenance, and immutable evidence-package
+contracts.
+
 ## Superseded pre-delivery candidates
 
 A protected release candidate is not delivered merely because its ref exists.
