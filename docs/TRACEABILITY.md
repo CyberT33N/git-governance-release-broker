@@ -1,8 +1,22 @@
 # Traceability
 
-## GOV-57: Preserve Cosign verify compatibility
+## GOV-58: Enable Cosign verify OCI discovery
 
 Status: in implementation.
+
+Scope:
+
+```text
+Use the supported --experimental-oci11 discovery flag on read-only cosign
+verify invocations that validate OCI 1.1 referrer signatures. Retain the
+sign-only registry-referrers mode, certificate identity, and issuer checks.
+Lock the compatible signing and verification syntax with same-package workflow
+contract tests.
+```
+
+## GOV-57: Preserve Cosign verify compatibility
+
+Status: integrated into develop through PR #30.
 
 Scope:
 

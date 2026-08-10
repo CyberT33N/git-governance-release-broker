@@ -310,7 +310,7 @@ func TestStagingWorkflowPreparesEvidenceWorkspaceBeforeSBOM(t *testing.T) {
 	}
 }
 
-func TestCosignOCIReferrerModeUsesStepScopedExperimentalMode(t *testing.T) {
+func TestCosignOCIReferrerModeUsesCompatibleVerifyDiscovery(t *testing.T) {
 	stagingPath := filepath.Join("..", "..", ".github", "workflows", "gcp-broker-staging.yml")
 	stagingContents, err := os.ReadFile(stagingPath)
 	if err != nil {
@@ -348,6 +348,9 @@ func TestCosignOCIReferrerModeUsesStepScopedExperimentalMode(t *testing.T) {
 	if strings.Contains(stagingVerify, "--registry-referrers-mode") {
 		t.Fatal("staging Cosign verification uses unsupported OCI referrers mode")
 	}
+	if !strings.Contains(stagingVerify, "--experimental-oci11") {
+		t.Fatal("staging Cosign verification does not enable OCI 1.1 discovery")
+	}
 
 	verifierPath := filepath.Join("..", "..", ".github", "actions", "verify-broker-evidence", "action.yml")
 	verifierContents, err := os.ReadFile(verifierPath)
@@ -378,5 +381,8 @@ func TestCosignOCIReferrerModeUsesStepScopedExperimentalMode(t *testing.T) {
 	verifierVerify := verifier[verifierVerifyStart : verifierVerifyStart+verifierVerifyEnd]
 	if strings.Contains(verifierVerify, "--registry-referrers-mode") {
 		t.Fatal("evidence verifier uses unsupported OCI referrers mode")
+	}
+	if !strings.Contains(verifierVerify, "--experimental-oci11") {
+		t.Fatal("evidence verifier does not enable OCI 1.1 discovery")
 	}
 }
