@@ -189,30 +189,39 @@ func TestBuildHandler(t *testing.T) {
 }
 
 func TestBuildHandlerPassesCredentialProfile(t *testing.T) {
-	t.Setenv(config.EnvAllowedRepositories, "github.com/CyberT33N/git-governance")
-	t.Setenv(config.EnvBrokerAppID, "1")
-	t.Setenv(config.EnvBrokerInstallationID, "2")
-	t.Setenv(config.EnvCredentialProfile, string(githubapp.CredentialProfileReconciliationPublisher))
-	t.Setenv(config.EnvBrokerAPIBaseURL, "https://api.github.com")
-	t.Setenv(config.EnvRequestTimeout, "1s")
-	t.Setenv(config.EnvMaxRequestBytes, "128")
-	t.Setenv(config.EnvMinimumTokenLifetime, "1m")
-	t.Setenv(config.EnvBrokerPrivateKeyPath, writePrivateKey(t))
+	for _, profile := range []githubapp.CredentialProfile{
+		githubapp.CredentialProfileReconciliationPublisher,
+		githubapp.CredentialProfileHotfixPropagationPublisher,
+		githubapp.CredentialProfileReleaseCredentialVerification,
+		githubapp.CredentialProfileHotfixDelivery,
+	} {
+		t.Run(string(profile), func(t *testing.T) {
+			t.Setenv(config.EnvAllowedRepositories, "github.com/CyberT33N/git-governance")
+			t.Setenv(config.EnvBrokerAppID, "1")
+			t.Setenv(config.EnvBrokerInstallationID, "2")
+			t.Setenv(config.EnvCredentialProfile, string(profile))
+			t.Setenv(config.EnvBrokerAPIBaseURL, "https://api.github.com")
+			t.Setenv(config.EnvRequestTimeout, "1s")
+			t.Setenv(config.EnvMaxRequestBytes, "128")
+			t.Setenv(config.EnvMinimumTokenLifetime, "1m")
+			t.Setenv(config.EnvBrokerPrivateKeyPath, writePrivateKey(t))
 
-	originalFactory := newGitHubClient
-	defer func() { newGitHubClient = originalFactory }()
+			originalFactory := newGitHubClient
+			t.Cleanup(func() { newGitHubClient = originalFactory })
 
-	var got githubapp.CredentialProfile
-	newGitHubClient = func(appID, installationID string, profile githubapp.CredentialProfile, privateKey *rsa.PrivateKey, apiBaseURL string, httpClient *http.Client, now func() time.Time) (*githubapp.Client, error) {
-		got = profile
-		return originalFactory(appID, installationID, profile, privateKey, apiBaseURL, httpClient, now)
-	}
+			var got githubapp.CredentialProfile
+			newGitHubClient = func(appID, installationID string, profile githubapp.CredentialProfile, privateKey *rsa.PrivateKey, apiBaseURL string, httpClient *http.Client, now func() time.Time) (*githubapp.Client, error) {
+				got = profile
+				return originalFactory(appID, installationID, profile, privateKey, apiBaseURL, httpClient, now)
+			}
 
-	if _, _, err := buildHandler(slog.New(slog.NewTextHandler(io.Discard, nil))); err != nil {
-		t.Fatalf("buildHandler() error = %v", err)
-	}
-	if got != githubapp.CredentialProfileReconciliationPublisher {
-		t.Fatalf("CredentialProfile = %q, want %q", got, githubapp.CredentialProfileReconciliationPublisher)
+			if _, _, err := buildHandler(slog.New(slog.NewTextHandler(io.Discard, nil))); err != nil {
+				t.Fatalf("buildHandler() error = %v", err)
+			}
+			if got != profile {
+				t.Fatalf("CredentialProfile = %q, want %q", got, profile)
+			}
+		})
 	}
 }
 

@@ -1,5 +1,26 @@
 # Traceability
 
+## GOV-52: Release credential verification and hotfix delivery source gates
+
+Status: in implementation.
+
+Scope:
+
+```text
+fixed release-credential-verification credential profile
+fixed hotfix-delivery credential profile
+main-bound immutable production deployment workflows
+main-bound immutable artifact-promotion workflows
+same-package profile and runtime-wiring whitebox tests
+workflow contracts and lane-specific GCP documentation
+```
+
+The profiles are server-side only. A caller cannot request or extend GitHub
+App permissions. The new verification and hotfix delivery App, Secret Manager,
+WIF, runtime, invoker, deployer, promoter, Artifact Registry, Cloud Run, and
+GitHub Environment boundaries remain external prerequisites until provisioned
+and verified.
+
 ## GOV-43: Hotfix propagation publisher boundary
 
 Status: review pending.

@@ -51,6 +51,12 @@ developer workstation, or written to logs.
     `pull_requests: write`, without an Actions permission request. It uses a
     separate GitHub App installation and is limited to reviewed
     hotfix-propagation candidates.
+  - `release-credential-verification`: `contents: read` only. It uses a
+    separate GitHub App installation and is limited to read-only verification
+    of the release credential boundary.
+  - `hotfix-delivery`: `actions: read`, `contents: read`, and
+    `pull_requests: read`. It uses a separate GitHub App installation and is
+    limited to validated main- or support-hotfix delivery evidence.
   The HTTP request never selects a profile or GitHub permission.
 - `BROKER_PRIVATE_KEY_PATH` is required and contains the mounted PEM file
   path.
@@ -106,6 +112,16 @@ main
 → gcp-hotfix-propagation-publisher-production.yml
 → immutable production digest
 → hotfix propagation publisher Broker
+
+main
+→ gcp-release-credential-verification-production.yml
+→ immutable production digest
+→ release credential verification Broker
+
+main
+→ gcp-hotfix-delivery-production.yml
+→ immutable production digest
+→ hotfix delivery Broker
 ```
 
 Deployment identity setup, required non-secret GitHub variables, and the exact
