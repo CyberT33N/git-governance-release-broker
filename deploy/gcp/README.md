@@ -2,7 +2,7 @@
 
 ## Deployment lanes
 
-The Broker has four separate deployment lanes:
+The Broker has six separate deployment lanes:
 
 ```text
 develop
@@ -14,6 +14,16 @@ main
 → gcp-broker-production
 → immutable digest from the production image repository
 → production release-automation broker
+
+main
+→ gcp-release-credential-verification-deployment
+→ immutable digest from the dedicated verification image repository
+→ production release-credential-verification broker
+
+main
+→ gcp-hotfix-delivery-deployment
+→ immutable digest from the dedicated hotfix delivery image repository
+→ production hotfix-delivery broker
 
 main
 → gcp-reconciliation-publisher-deployment
@@ -41,6 +51,18 @@ gcp-broker-staging
 → administrator bypass disabled
 
 gcp-broker-production
+→ selected branch: main
+→ required reviewers
+→ prevent self-review
+→ administrator bypass disabled
+
+gcp-release-credential-verification-deployment
+→ selected branch: main
+→ required reviewers
+→ prevent self-review
+→ administrator bypass disabled
+
+gcp-hotfix-delivery-deployment
 → selected branch: main
 → required reviewers
 → prevent self-review
@@ -111,6 +133,69 @@ Production accepts only a full immutable image reference:
 
 It never builds from `develop`, accepts a mutable tag, or creates a public
 Cloud Run service.
+
+## Release credential verification resources
+
+The `gcp-release-credential-verification-production.yml` workflow requires:
+
+```text
+GCP_PROJECT_ID
+GCP_REGION
+GCP_SDK_VERSION
+GCP_RELEASE_CREDENTIAL_VERIFICATION_DEPLOYMENT_WORKLOAD_IDENTITY_PROVIDER
+GCP_RELEASE_CREDENTIAL_VERIFICATION_DEPLOYMENT_SERVICE_ACCOUNT
+GCP_RELEASE_CREDENTIAL_VERIFICATION_ARTIFACT_REPOSITORY
+GCP_RELEASE_CREDENTIAL_VERIFICATION_BROKER_SERVICE
+GCP_RELEASE_CREDENTIAL_VERIFICATION_RUNTIME_SERVICE_ACCOUNT
+GCP_RELEASE_CREDENTIAL_VERIFICATION_INVOKER_SERVICE_ACCOUNT
+GCP_RELEASE_CREDENTIAL_VERIFICATION_BROKER_SECRET
+GCP_RELEASE_CREDENTIAL_VERIFICATION_BROKER_APP_ID
+GCP_RELEASE_CREDENTIAL_VERIFICATION_BROKER_APP_INSTALLATION_ID
+GCP_RELEASE_CREDENTIAL_VERIFICATION_BROKER_ALLOWED_REPOSITORIES
+```
+
+The broker always runs:
+
+```text
+BROKER_CREDENTIAL_PROFILE=release-credential-verification
+```
+
+Its GitHub App, Secret Manager key, Cloud Run service, WIF provider, runtime,
+invoker, deployer, promoter, environment, and Artifact Registry repository are
+separate from every mutating release, reconciliation, and hotfix lane. The App
+may request only `contents: read` for the approved repository.
+
+## Hotfix delivery resources
+
+The `gcp-hotfix-delivery-production.yml` workflow requires:
+
+```text
+GCP_PROJECT_ID
+GCP_REGION
+GCP_SDK_VERSION
+GCP_HOTFIX_DELIVERY_DEPLOYMENT_WORKLOAD_IDENTITY_PROVIDER
+GCP_HOTFIX_DELIVERY_DEPLOYMENT_SERVICE_ACCOUNT
+GCP_HOTFIX_DELIVERY_ARTIFACT_REPOSITORY
+GCP_HOTFIX_DELIVERY_BROKER_SERVICE
+GCP_HOTFIX_DELIVERY_RUNTIME_SERVICE_ACCOUNT
+GCP_HOTFIX_DELIVERY_INVOKER_SERVICE_ACCOUNT
+GCP_HOTFIX_DELIVERY_BROKER_SECRET
+GCP_HOTFIX_DELIVERY_BROKER_APP_ID
+GCP_HOTFIX_DELIVERY_BROKER_APP_INSTALLATION_ID
+GCP_HOTFIX_DELIVERY_BROKER_ALLOWED_REPOSITORIES
+```
+
+The broker always runs:
+
+```text
+BROKER_CREDENTIAL_PROFILE=hotfix-delivery
+```
+
+Its GitHub App, Secret Manager key, Cloud Run service, WIF provider, runtime,
+invoker, deployer, promoter, environment, and Artifact Registry repository are
+separate from regular release delivery and all publisher lanes. The App may
+request only `actions: read`, `contents: read`, and `pull_requests: read` for
+the approved repository.
 
 ## Reconciliation publisher resources
 
@@ -190,6 +275,40 @@ GCP_HOTFIX_PROPAGATION_PUBLISHER_ARTIFACT_REPOSITORY
 
 The promoter may read only the staging repository and write only the dedicated
 hotfix publisher repository. It receives no Cloud Run, Secret Manager, Service
+Account User, or GitHub App permission.
+
+## Release credential verification artifact promotion
+
+`gcp-release-credential-verification-promotion.yml` is main-bound and copies
+a reviewed staging digest into the dedicated verification repository without
+rebuilding it. It requires:
+
+```text
+GCP_RELEASE_CREDENTIAL_VERIFICATION_ARTIFACT_PROMOTION_WIF_PROVIDER
+GCP_RELEASE_CREDENTIAL_VERIFICATION_ARTIFACT_PROMOTER_SERVICE_ACCOUNT
+GCP_RELEASE_CREDENTIAL_VERIFICATION_SOURCE_ARTIFACT_REPOSITORY=release-broker-staging-images
+GCP_RELEASE_CREDENTIAL_VERIFICATION_ARTIFACT_REPOSITORY
+```
+
+The promoter may read only the staging repository and write only the dedicated
+verification repository. It receives no Cloud Run, Secret Manager, Service
+Account User, or GitHub App permission.
+
+## Hotfix delivery artifact promotion
+
+`gcp-hotfix-delivery-promotion.yml` is main-bound and copies a reviewed
+staging digest into the dedicated hotfix delivery repository without rebuilding
+it. It requires:
+
+```text
+GCP_HOTFIX_DELIVERY_ARTIFACT_PROMOTION_WIF_PROVIDER
+GCP_HOTFIX_DELIVERY_ARTIFACT_PROMOTER_SERVICE_ACCOUNT
+GCP_HOTFIX_DELIVERY_SOURCE_ARTIFACT_REPOSITORY=release-broker-staging-images
+GCP_HOTFIX_DELIVERY_ARTIFACT_REPOSITORY
+```
+
+The promoter may read only the staging repository and write only the dedicated
+hotfix delivery repository. It receives no Cloud Run, Secret Manager, Service
 Account User, or GitHub App permission.
 
 ## External Fortress prerequisites

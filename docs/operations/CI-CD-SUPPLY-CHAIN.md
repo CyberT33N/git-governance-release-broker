@@ -80,6 +80,12 @@ gcp-broker-staging
 gcp-broker-production
 → production release-automation profile
 
+gcp-release-credential-verification-deployment
+→ production release-credential-verification profile
+
+gcp-hotfix-delivery-deployment
+→ production hotfix-delivery profile
+
 gcp-reconciliation-publisher-deployment
 → production reconciliation-publisher profile
 
@@ -87,7 +93,7 @@ gcp-hotfix-propagation-publisher-deployment
 → production hotfix-propagation-publisher profile
 ```
 
-The four environments, service identities, secrets, image repositories, and
+The six environments, service identities, secrets, image repositories, and
 Cloud Run services must remain separate. No deployer, runtime, or invoker
 identity receives permissions across those boundaries.
 

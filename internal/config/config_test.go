@@ -104,6 +104,34 @@ func TestLoadRejectsInvalidValues(t *testing.T) {
 	}
 }
 
+func TestLoadAcceptsEveryFixedCredentialProfile(t *testing.T) {
+	base := map[string]string{
+		EnvAllowedRepositories:  "github.com/CyberT33N/git-governance",
+		EnvBrokerAppID:          "1",
+		EnvBrokerInstallationID: "2",
+		EnvBrokerPrivateKeyPath: "/key.pem",
+	}
+	for _, profile := range []githubapp.CredentialProfile{
+		githubapp.CredentialProfileReleaseAutomation,
+		githubapp.CredentialProfileReconciliationPublisher,
+		githubapp.CredentialProfileHotfixPropagationPublisher,
+		githubapp.CredentialProfileReleaseCredentialVerification,
+		githubapp.CredentialProfileHotfixDelivery,
+	} {
+		t.Run(string(profile), func(t *testing.T) {
+			environment := cloneEnvironment(base)
+			environment[EnvCredentialProfile] = string(profile)
+			configuration, err := load(func(key string) string { return environment[key] })
+			if err != nil {
+				t.Fatalf("load() error = %v", err)
+			}
+			if configuration.CredentialProfile != profile {
+				t.Fatalf("CredentialProfile = %q, want %q", configuration.CredentialProfile, profile)
+			}
+		})
+	}
+}
+
 func TestPortValue(t *testing.T) {
 	for _, testCase := range []struct {
 		name string
