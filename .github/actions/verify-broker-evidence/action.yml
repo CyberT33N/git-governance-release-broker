@@ -1,0 +1,123 @@
+name: Verify Broker Evidence
+description: Verifies immutable staging evidence before a production deployment.
+
+inputs:
+  image:
+    description: Full immutable production image reference.
+    required: true
+  project-id:
+    description: Google Cloud project that owns the evidence repository.
+    required: true
+  region:
+    description: Artifact Registry region.
+    required: true
+  evidence-repository:
+    description: Generic Artifact Registry repository containing the evidence package.
+    required: true
+  signer-workflow:
+    description: Repository-relative staging workflow path that signs and attests the image.
+    required: true
+  source-ref:
+    description: Trusted Git ref for the staging evidence workflow.
+    required: true
+
+outputs:
+  source-image:
+    description: Immutable staging image verified by this action.
+    value: ${{ steps.verify.outputs.source-image }}
+  source-commit:
+    description: Source commit recorded in the verified manifest.
+    value: ${{ steps.verify.outputs.source-commit }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install Cosign
+      uses: sigstore/cosign-installer@4959ce089c160fddf62f7b42464195ba1a56d382 # v3.6.0
+
+    - id: verify
+      name: Verify immutable container evidence
+      shell: bash
+      env:
+        IMAGE: ${{ inputs.image }}
+        GCP_PROJECT_ID: ${{ inputs.project-id }}
+        GCP_REGION: ${{ inputs.region }}
+        EVIDENCE_ARTIFACT_REPOSITORY: ${{ inputs.evidence-repository }}
+        SIGNER_WORKFLOW: ${{ inputs.signer-workflow }}
+        SOURCE_REF: ${{ inputs.source-ref }}
+      run: |
+        set -euo pipefail
+        digest="${IMAGE##*@sha256:}"
+        test "${#digest}" -eq 64
+        test "$digest" = "$(printf '%s' "$digest" | tr -cd '0-9a-f')"
+
+        registry="${GCP_REGION}-docker.pkg.dev"
+        gcloud auth configure-docker "$registry" --quiet
+
+        evidence_directory="$(mktemp -d)"
+        trap 'rm -rf "$evidence_directory"' EXIT
+        gcloud artifacts generic download \
+          --project="$GCP_PROJECT_ID" \
+          --location="$GCP_REGION" \
+          --repository="$EVIDENCE_ARTIFACT_REPOSITORY" \
+          --package=broker-evidence \
+          --version="$digest" \
+          --destination="$evidence_directory"
+
+        manifest="$evidence_directory/manifest.json"
+        sbom="$evidence_directory/broker.spdx.json"
+        provenance_bundle="$evidence_directory/provenance.intoto.jsonl"
+        sbom_bundle="$evidence_directory/sbom.intoto.jsonl"
+        test -f "$manifest"
+        test -f "$sbom"
+        test -f "$provenance_bundle"
+        test -f "$sbom_bundle"
+
+        source_image="$(jq -er '.source_image' "$manifest")"
+        source_commit="$(jq -er '.source_commit' "$manifest")"
+        expected_digest="sha256:${digest}"
+        jq -e \
+          --arg expected_digest "$expected_digest" \
+          --arg source_image "$source_image" \
+          --arg source_commit "$source_commit" \
+          '.schema_version == 1 and
+           .image_digest == $expected_digest and
+           .source_image == $source_image and
+           .source_commit == $source_commit and
+           (.source_image | endswith("@" + $expected_digest)) and
+           (.source_commit | test("^[0-9a-f]{40}$")) and
+           (.sbom_sha256 | test("^[0-9a-f]{64}$")) and
+           (.provenance_bundle_sha256 | test("^[0-9a-f]{64}$")) and
+           (.sbom_bundle_sha256 | test("^[0-9a-f]{64}$"))' \
+          "$manifest" >/dev/null
+        test "$(sha256sum "$sbom" | awk '{print $1}')" = "$(jq -er '.sbom_sha256' "$manifest")"
+        test "$(sha256sum "$provenance_bundle" | awk '{print $1}')" = "$(jq -er '.provenance_bundle_sha256' "$manifest")"
+        test "$(sha256sum "$sbom_bundle" | awk '{print $1}')" = "$(jq -er '.sbom_bundle_sha256' "$manifest")"
+
+        certificate_identity="https://github.com/${GITHUB_REPOSITORY}/${SIGNER_WORKFLOW}@${SOURCE_REF}"
+        cosign verify \
+          --registry-referrers-mode=oci-1-1 \
+          --certificate-identity="$certificate_identity" \
+          --certificate-oidc-issuer="https://token.actions.githubusercontent.com" \
+          "$source_image" >/dev/null
+
+        gh attestation verify \
+          "oci://${source_image}" \
+          --repo "$GITHUB_REPOSITORY" \
+          --signer-workflow "${GITHUB_REPOSITORY}/${SIGNER_WORKFLOW}" \
+          --source-ref "$SOURCE_REF" \
+          --source-digest "$source_commit" \
+          --deny-self-hosted-runners \
+          --bundle-from-oci >/dev/null
+        gh attestation verify \
+          "oci://${source_image}" \
+          --repo "$GITHUB_REPOSITORY" \
+          --signer-workflow "${GITHUB_REPOSITORY}/${SIGNER_WORKFLOW}" \
+          --source-ref "$SOURCE_REF" \
+          --source-digest "$source_commit" \
+          --deny-self-hosted-runners \
+          --predicate-type "https://spdx.dev/Document/v2.3" \
+          --bundle-from-oci >/dev/null
+
+        echo "source-image=$source_image" >> "$GITHUB_OUTPUT"
+        echo "source-commit=$source_commit" >> "$GITHUB_OUTPUT"

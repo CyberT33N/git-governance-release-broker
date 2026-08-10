@@ -12,6 +12,7 @@ on:
           - deploy
 
 permissions:
+  attestations: write
   contents: read
   id-token: write
 
@@ -33,6 +34,7 @@ jobs:
       GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.GCP_STAGING_WORKLOAD_IDENTITY_PROVIDER }}
       GCP_DEPLOYER_SERVICE_ACCOUNT: ${{ vars.GCP_STAGING_DEPLOYER_SERVICE_ACCOUNT }}
       ARTIFACT_REPOSITORY: ${{ vars.GCP_STAGING_ARTIFACT_REPOSITORY }}
+      EVIDENCE_ARTIFACT_REPOSITORY: ${{ vars.GCP_STAGING_EVIDENCE_ARTIFACT_REPOSITORY }}
     steps:
       - name: Check out source
         uses: actions/checkout@9f698171ed81b15d1823a05fc7211befd50c8ae0 # v6.0.3
@@ -44,7 +46,7 @@ jobs:
         run: |
           set -euo pipefail
           test "$GITHUB_REF" = "refs/heads/develop"
-          for variable in GCP_PROJECT_ID GCP_REGION GCP_SDK_VERSION GCP_WORKLOAD_IDENTITY_PROVIDER GCP_DEPLOYER_SERVICE_ACCOUNT ARTIFACT_REPOSITORY; do
+          for variable in GCP_PROJECT_ID GCP_REGION GCP_SDK_VERSION GCP_WORKLOAD_IDENTITY_PROVIDER GCP_DEPLOYER_SERVICE_ACCOUNT ARTIFACT_REPOSITORY EVIDENCE_ARTIFACT_REPOSITORY; do
             test -n "${!variable:-}" || { echo "missing GitHub environment variable: $variable" >&2; exit 1; }
           done
 
@@ -74,6 +76,16 @@ jobs:
               --project="$GCP_PROJECT_ID" \
               --quiet
           fi
+          if ! gcloud artifacts repositories describe "$EVIDENCE_ARTIFACT_REPOSITORY" \
+            --location="$GCP_REGION" \
+            --project="$GCP_PROJECT_ID" >/dev/null 2>&1; then
+            gcloud artifacts repositories create "$EVIDENCE_ARTIFACT_REPOSITORY" \
+              --repository-format=generic \
+              --location="$GCP_REGION" \
+              --description="Immutable broker staging evidence" \
+              --project="$GCP_PROJECT_ID" \
+              --quiet
+          fi
 
   deploy:
     if: ${{ inputs.operation == 'deploy' }}
@@ -88,6 +100,7 @@ jobs:
       GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.GCP_STAGING_WORKLOAD_IDENTITY_PROVIDER }}
       GCP_DEPLOYER_SERVICE_ACCOUNT: ${{ vars.GCP_STAGING_DEPLOYER_SERVICE_ACCOUNT }}
       ARTIFACT_REPOSITORY: ${{ vars.GCP_STAGING_ARTIFACT_REPOSITORY }}
+      EVIDENCE_ARTIFACT_REPOSITORY: ${{ vars.GCP_STAGING_EVIDENCE_ARTIFACT_REPOSITORY }}
       BROKER_SERVICE: ${{ vars.GCP_STAGING_BROKER_SERVICE }}
       RUNTIME_SERVICE_ACCOUNT: ${{ vars.GCP_STAGING_RUNTIME_SERVICE_ACCOUNT }}
       INVOKER_SERVICE_ACCOUNT: ${{ vars.GCP_STAGING_INVOKER_SERVICE_ACCOUNT }}
@@ -106,7 +119,7 @@ jobs:
         run: |
           set -euo pipefail
           test "$GITHUB_REF" = "refs/heads/develop"
-          for variable in GCP_PROJECT_ID GCP_REGION GCP_SDK_VERSION GCP_WORKLOAD_IDENTITY_PROVIDER GCP_DEPLOYER_SERVICE_ACCOUNT ARTIFACT_REPOSITORY BROKER_SERVICE RUNTIME_SERVICE_ACCOUNT INVOKER_SERVICE_ACCOUNT BROKER_SECRET BROKER_APP_ID BROKER_APP_INSTALLATION_ID BROKER_ALLOWED_REPOSITORIES; do
+          for variable in GCP_PROJECT_ID GCP_REGION GCP_SDK_VERSION GCP_WORKLOAD_IDENTITY_PROVIDER GCP_DEPLOYER_SERVICE_ACCOUNT ARTIFACT_REPOSITORY EVIDENCE_ARTIFACT_REPOSITORY BROKER_SERVICE RUNTIME_SERVICE_ACCOUNT INVOKER_SERVICE_ACCOUNT BROKER_SECRET BROKER_APP_ID BROKER_APP_INSTALLATION_ID BROKER_ALLOWED_REPOSITORIES; do
             test -n "${!variable:-}" || { echo "missing GitHub environment variable: $variable" >&2; exit 1; }
           done
 
@@ -137,8 +150,101 @@ jobs:
           digest="$(gcloud artifacts docker images describe "$image" \
             --format='value(image_summary.digest)' \
             --project="$GCP_PROJECT_ID")"
-          test -n "$digest"
+          [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
           echo "reference=${image%@*}@${digest}" >> "$GITHUB_OUTPUT"
+          echo "repository=${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${ARTIFACT_REPOSITORY}/broker" >> "$GITHUB_OUTPUT"
+          echo "digest=${digest}" >> "$GITHUB_OUTPUT"
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@4959ce089c160fddf62f7b42464195ba1a56d382 # v3.6.0
+
+      - name: Generate staging image SBOM
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        with:
+          image: ${{ steps.image.outputs.reference }}
+          format: spdx-json
+          output-file: .build/evidence/broker.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
+
+      - name: Sign and verify immutable staging image
+        shell: bash
+        env:
+          IMAGE: ${{ steps.image.outputs.reference }}
+        run: |
+          set -euo pipefail
+          identity="https://github.com/${GITHUB_REPOSITORY}/.github/workflows/gcp-broker-staging.yml@refs/heads/develop"
+          cosign sign --yes --registry-referrers-mode=oci-1-1 "$IMAGE"
+          cosign verify \
+            --registry-referrers-mode=oci-1-1 \
+            --certificate-identity="$identity" \
+            --certificate-oidc-issuer="https://token.actions.githubusercontent.com" \
+            "$IMAGE" >/dev/null
+
+      - id: provenance
+        name: Attest staging image provenance
+        uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4.2.0
+        with:
+          subject-name: ${{ steps.image.outputs.repository }}
+          subject-digest: ${{ steps.image.outputs.digest }}
+          push-to-registry: true
+          create-storage-record: true
+
+      - id: sbom
+        name: Attest staging image SBOM
+        uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4.2.0
+        with:
+          subject-name: ${{ steps.image.outputs.repository }}
+          subject-digest: ${{ steps.image.outputs.digest }}
+          sbom-path: .build/evidence/broker.spdx.json
+          push-to-registry: true
+          create-storage-record: true
+
+      - name: Store immutable staging evidence
+        shell: bash
+        env:
+          IMAGE: ${{ steps.image.outputs.reference }}
+          DIGEST: ${{ steps.image.outputs.digest }}
+          PROVENANCE_BUNDLE: ${{ steps.provenance.outputs.bundle-path }}
+          SBOM_BUNDLE: ${{ steps.sbom.outputs.bundle-path }}
+        run: |
+          set -euo pipefail
+          package_directory=".build/evidence/package"
+          mkdir -p "$package_directory"
+          cp .build/evidence/broker.spdx.json "$package_directory/broker.spdx.json"
+          cp "$PROVENANCE_BUNDLE" "$package_directory/provenance.intoto.jsonl"
+          cp "$SBOM_BUNDLE" "$package_directory/sbom.intoto.jsonl"
+          sbom_sha256="$(sha256sum "$package_directory/broker.spdx.json" | awk '{print $1}')"
+          provenance_bundle_sha256="$(sha256sum "$package_directory/provenance.intoto.jsonl" | awk '{print $1}')"
+          sbom_bundle_sha256="$(sha256sum "$package_directory/sbom.intoto.jsonl" | awk '{print $1}')"
+          jq -n \
+            --arg source_commit "$GITHUB_SHA" \
+            --arg source_image "$IMAGE" \
+            --arg image_digest "$DIGEST" \
+            --arg sbom_sha256 "$sbom_sha256" \
+            --arg provenance_bundle_sha256 "$provenance_bundle_sha256" \
+            --arg sbom_bundle_sha256 "$sbom_bundle_sha256" \
+            --arg signer_workflow ".github/workflows/gcp-broker-staging.yml" \
+            --arg source_ref "refs/heads/develop" \
+            '{
+              schema_version: 1,
+              source_commit: $source_commit,
+              source_image: $source_image,
+              image_digest: $image_digest,
+              sbom_sha256: $sbom_sha256,
+              provenance_bundle_sha256: $provenance_bundle_sha256,
+              sbom_bundle_sha256: $sbom_bundle_sha256,
+              signer_workflow: $signer_workflow,
+              source_ref: $source_ref
+            }' > "$package_directory/manifest.json"
+          gcloud artifacts generic upload \
+            --project="$GCP_PROJECT_ID" \
+            --location="$GCP_REGION" \
+            --repository="$EVIDENCE_ARTIFACT_REPOSITORY" \
+            --package=broker-evidence \
+            --version="${DIGEST#sha256:}" \
+            --source-directory="$package_directory" \
+            --skip-existing
 
       - name: Deploy private staging broker
         shell: bash

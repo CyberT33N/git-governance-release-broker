@@ -70,8 +70,11 @@ source.
 - Staging and production require distinct WIF, deployer, runtime, invoker,
   Artifact Registry, Cloud Run, Secret Manager, and GitHub Environment
   boundaries.
-- Production image promotion, SBOM, provenance, signatures, and attestations
-  remain external fail-closed prerequisites until the platform evidence lane is
+- Staging signs and attests immutable image digests, then stores an immutable
+  evidence package. Promotion and deployment re-verify that evidence before
+  production mutation.
+- Lane-specific generic evidence repositories, the approved Go proxy, and the
+  hermetic build image remain external fail-closed prerequisites until
   provisioned.
 - A GitHub Environment cannot be treated as a production boundary until
   required reviewers, self-review prevention, branch restrictions, and

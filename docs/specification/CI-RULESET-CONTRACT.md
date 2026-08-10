@@ -29,9 +29,11 @@ HTTP boundary fuzz smoke
 Linux AMD64 source binary build
 ```
 
-The hermetic container build, SBOM, provenance, signature, and attestation
-lane remains externally blocked until the approved proxy, build image, and
-artifact evidence registry are provisioned.
+The staging and production workflow contract generates and verifies SPDX SBOM,
+keyless signatures, provenance, attestations, and immutable evidence packages.
+The approved proxy, hermetic build image, and lane-specific evidence
+repositories remain external prerequisites; missing infrastructure blocks
+promotion and deployment fail-closed.
 
 ## Code scanning and dependency admission
 

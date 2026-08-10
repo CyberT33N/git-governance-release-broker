@@ -1,4 +1,4 @@
-name: Promote Hotfix Propagation Publisher Artifact
+name: Promote Broker Production Artifact
 
 on:
   workflow_dispatch:
@@ -14,26 +14,26 @@ permissions:
   id-token: write
 
 concurrency:
-  group: gcp-hotfix-propagation-publisher-artifact-promotion
+  group: gcp-broker-production-artifact-promotion
   cancel-in-progress: false
 
 jobs:
   promote:
-    name: Promote Hotfix Propagation Publisher Artifact
+    name: Promote Broker Production Artifact
     runs-on: ubuntu-24.04
     timeout-minutes: 20
-    environment: gcp-hotfix-propagation-publisher-deployment
+    environment: gcp-broker-production
     env:
       SOURCE_COMMIT: ${{ inputs.source_commit }}
       GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
       GCP_REGION: ${{ vars.GCP_REGION }}
       GCP_SDK_VERSION: ${{ vars.GCP_SDK_VERSION }}
-      GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.GCP_HOTFIX_PROPAGATION_PUBLISHER_ARTIFACT_PROMOTION_WIF_PROVIDER }}
-      GCP_PROMOTER_SERVICE_ACCOUNT: ${{ vars.GCP_HOTFIX_PROPAGATION_PUBLISHER_ARTIFACT_PROMOTER_SERVICE_ACCOUNT }}
-      SOURCE_ARTIFACT_REPOSITORY: ${{ vars.GCP_HOTFIX_PROPAGATION_PUBLISHER_SOURCE_ARTIFACT_REPOSITORY }}
-      TARGET_ARTIFACT_REPOSITORY: ${{ vars.GCP_HOTFIX_PROPAGATION_PUBLISHER_ARTIFACT_REPOSITORY }}
-      SOURCE_EVIDENCE_ARTIFACT_REPOSITORY: ${{ vars.GCP_HOTFIX_PROPAGATION_PUBLISHER_SOURCE_EVIDENCE_ARTIFACT_REPOSITORY }}
-      TARGET_EVIDENCE_ARTIFACT_REPOSITORY: ${{ vars.GCP_HOTFIX_PROPAGATION_PUBLISHER_EVIDENCE_ARTIFACT_REPOSITORY }}
+      GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.GCP_PRODUCTION_ARTIFACT_PROMOTION_WIF_PROVIDER }}
+      GCP_PROMOTER_SERVICE_ACCOUNT: ${{ vars.GCP_PRODUCTION_ARTIFACT_PROMOTER_SERVICE_ACCOUNT }}
+      SOURCE_ARTIFACT_REPOSITORY: ${{ vars.GCP_PRODUCTION_SOURCE_ARTIFACT_REPOSITORY }}
+      TARGET_ARTIFACT_REPOSITORY: ${{ vars.GCP_PRODUCTION_ARTIFACT_REPOSITORY }}
+      SOURCE_EVIDENCE_ARTIFACT_REPOSITORY: ${{ vars.GCP_PRODUCTION_SOURCE_EVIDENCE_ARTIFACT_REPOSITORY }}
+      TARGET_EVIDENCE_ARTIFACT_REPOSITORY: ${{ vars.GCP_PRODUCTION_EVIDENCE_ARTIFACT_REPOSITORY }}
     steps:
       - name: Check out trusted production control plane
         uses: actions/checkout@9f698171ed81b15d1823a05fc7211befd50c8ae0 # v6.0.3
@@ -49,9 +49,9 @@ jobs:
           for variable in SOURCE_COMMIT GCP_PROJECT_ID GCP_REGION GCP_SDK_VERSION GCP_WORKLOAD_IDENTITY_PROVIDER GCP_PROMOTER_SERVICE_ACCOUNT SOURCE_ARTIFACT_REPOSITORY TARGET_ARTIFACT_REPOSITORY SOURCE_EVIDENCE_ARTIFACT_REPOSITORY TARGET_EVIDENCE_ARTIFACT_REPOSITORY; do
             test -n "${!variable:-}" || { echo "missing GitHub environment variable: $variable" >&2; exit 1; }
           done
+          [[ "$SOURCE_COMMIT" =~ ^[0-9a-f]{40}$ ]] || { echo "source_commit must be a full lower-case Git SHA" >&2; exit 1; }
           test "$SOURCE_ARTIFACT_REPOSITORY" != "$TARGET_ARTIFACT_REPOSITORY"
           test "$SOURCE_EVIDENCE_ARTIFACT_REPOSITORY" != "$TARGET_EVIDENCE_ARTIFACT_REPOSITORY"
-          [[ "$SOURCE_COMMIT" =~ ^[0-9a-f]{40}$ ]] || { echo "source_commit must be a full lower-case Git SHA" >&2; exit 1; }
           git cat-file -e "${SOURCE_COMMIT}^{commit}"
           git merge-base --is-ancestor "$SOURCE_COMMIT" HEAD || {
             echo "source_commit must be reachable from main" >&2
@@ -107,12 +107,10 @@ jobs:
           set -euo pipefail
           registry="${GCP_REGION}-docker.pkg.dev"
           target_tag="${registry}/${GCP_PROJECT_ID}/${TARGET_ARTIFACT_REPOSITORY}/broker:sha-${SOURCE_COMMIT}"
-
           gcloud auth configure-docker "$registry" --quiet
           docker pull "$SOURCE_IMAGE"
           docker tag "$SOURCE_IMAGE" "$target_tag"
           docker push "$target_tag"
-
           target_digest="$(gcloud artifacts docker images describe "$target_tag" \
             --project="$GCP_PROJECT_ID" \
             --format='value(image_summary.digest)')"

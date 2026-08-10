@@ -138,6 +138,12 @@ Production Cloud Run deployment requires:
 - a full immutable `@sha256:` image reference;
 - a `main`-bound protected GitHub Environment.
 
+Before promotion and deployment, the workflow must verify a staging-digest
+evidence package containing an SPDX SBOM, keyless Sigstore signature,
+provenance attestation, and SBOM attestation. The package is immutable and
+stored separately from the Docker image repository; a missing, mismatched, or
+unverifiable package blocks production deployment.
+
 ## Protected release lines
 
 `release/<semver>` and `support/<major.minor>` are created only through
