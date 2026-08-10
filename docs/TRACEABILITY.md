@@ -1,8 +1,21 @@
 # Traceability
 
-## GOV-59: Upgrade Cosign v3 evidence workflows
+## GOV-60: Upgrade Cosign installer for v3 bundles
 
 Status: in implementation.
+
+Scope:
+
+```text
+Pin both evidence workflow installation points to the Cosign installer release
+that verifies Cosign v3 keyless bundles. Keep the explicit Cosign v3.1.3
+binary pin and lock the compatible installer and binary pair with same-package
+workflow contract tests.
+```
+
+## GOV-59: Upgrade Cosign v3 evidence workflows
+
+Status: integrated into develop through PR #32.
 
 Scope:
 
