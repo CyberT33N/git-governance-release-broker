@@ -150,6 +150,13 @@ that permits only `main`, requires an independent reviewer, prevents
 self-review, and disallows administrator bypass. The workflow never accepts a
 caller-selected source branch.
 
+An unpromoted candidate is not a released version. If a protected
+`release/<semver>` becomes fully contained in `main` before promotion and no
+immutable tag, release, or delivery evidence exists, it must be audited as
+`superseded-before-delivery`. It must not receive retrospective tags, artifacts,
+signatures, attestations, or a GitHub Release. A later successor uses a new
+release version and the superseded ref is retained until controlled cleanup.
+
 ## Operational limitations
 
 This initial implementation supports `github.com` release automation. GitHub
