@@ -183,7 +183,6 @@ jobs:
           identity="https://github.com/${GITHUB_REPOSITORY}/.github/workflows/gcp-broker-staging.yml@refs/heads/develop"
           cosign sign --yes --registry-referrers-mode=oci-1-1 "$IMAGE"
           cosign verify \
-            --registry-referrers-mode=oci-1-1 \
             --certificate-identity="$identity" \
             --certificate-oidc-issuer="https://token.actions.githubusercontent.com" \
             "$IMAGE" >/dev/null

@@ -1,8 +1,22 @@
 # Traceability
 
-## GOV-56: Enable Cosign OCI referrers
+## GOV-57: Preserve Cosign verify compatibility
 
 Status: in implementation.
+
+Scope:
+
+```text
+Keep OCI 1.1 referrer mode scoped to immutable image signing. Retain
+experimental mode only within the affected sign and verification steps. Remove
+the unsupported registry-referrers flag from all read-only cosign verify
+invocations while retaining certificate identity and issuer verification. Lock
+the supported sign and verify syntax with same-package workflow contract tests.
+```
+
+## GOV-56: Enable Cosign OCI referrers
+
+Status: integrated into develop through PR #29.
 
 Scope:
 
