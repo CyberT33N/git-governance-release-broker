@@ -1,5 +1,19 @@
 # Traceability
 
+## GOV-55: Prepare staging evidence workspace
+
+Status: in implementation.
+
+Scope:
+
+```text
+Create .build/evidence before the staging SBOM action writes broker.spdx.json.
+Keep .build/evidence as a temporary runner workspace.
+Persist final SBOM, signature, attestations, and manifest only through the
+immutable evidence package and digest-bound registry attachments.
+Lock the ordering with a same-package workflow contract test.
+```
+
 ## GOV-54: Broker container evidence gate
 
 Status: in implementation.
