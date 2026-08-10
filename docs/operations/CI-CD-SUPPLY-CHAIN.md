@@ -88,6 +88,19 @@ Any future Cosign upgrade requires a new governed compatibility review of the
 signing, verification, SBOM, provenance, and immutable evidence-package
 contracts.
 
+## Registry authentication for attestations
+
+GitHub's registry attestation action requires a static Docker `auths` entry; it
+does not consume Google Cloud Docker credential helpers. The staging workflow
+therefore exchanges its federated identity for a short-lived access token and
+uses `docker/login-action` with `oauth2accesstoken` and password-stdin.
+
+The composite evidence verifier creates an isolated temporary `DOCKER_CONFIG`,
+logs in with a short-lived `gcloud auth print-access-token` value, then logs
+out and removes that directory through its shell cleanup trap. No long-lived
+credential, private key, or token value is written to the repository, workflow
+output, or GitHub environment variables.
+
 ## Superseded pre-delivery candidates
 
 A protected release candidate is not delivered merely because its ref exists.

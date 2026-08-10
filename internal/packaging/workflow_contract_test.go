@@ -30,6 +30,11 @@ func TestWorkflowContracts(t *testing.T) {
 				"sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6",
 				"cosign-release: v3.1.3",
 				"cosign sign --yes \"$IMAGE\"",
+				"token_format: access_token",
+				"docker/login-action@dbcb813823bdd20940b903addbd779551569679f",
+				"username: oauth2accesstoken",
+				"password: ${{ steps.auth.outputs.access_token }}",
+				"logout: true",
 				"gcloud artifacts generic upload",
 			},
 			forbidden: []string{
@@ -37,6 +42,7 @@ func TestWorkflowContracts(t *testing.T) {
 				"--registry-referrers-mode",
 				"--experimental-oci11",
 				"sigstore/cosign-installer@4959ce089c160fddf62f7b42464195ba1a56d382",
+				"gcloud auth configure-docker",
 			},
 		},
 		{
@@ -54,6 +60,9 @@ func TestWorkflowContracts(t *testing.T) {
 				"--source-digest",
 				"provenance_bundle_sha256",
 				"sbom_bundle_sha256",
+				"gcloud auth print-access-token",
+				"docker login \"$registry\" --username oauth2accesstoken --password-stdin",
+				"docker logout \"$registry\"",
 			},
 			forbidden: []string{
 				"cosign sign",
@@ -63,6 +72,7 @@ func TestWorkflowContracts(t *testing.T) {
 				"--registry-referrers-mode",
 				"--experimental-oci11",
 				"sigstore/cosign-installer@4959ce089c160fddf62f7b42464195ba1a56d382",
+				"gcloud auth configure-docker",
 			},
 		},
 		{
@@ -407,5 +417,97 @@ func TestCosignV3UsesBundleDefaults(t *testing.T) {
 	}
 	if strings.Contains(verifierVerify, "--experimental-oci11") {
 		t.Fatal("evidence verifier retains removed OCI 1.1 discovery mode")
+	}
+}
+
+func TestAttestationRegistryAuthUsesShortLivedStaticDockerCredentials(t *testing.T) {
+	stagingPath := filepath.Join("..", "..", ".github", "workflows", "gcp-broker-staging.yml")
+	stagingContents, err := os.ReadFile(stagingPath)
+	if err != nil {
+		t.Fatalf("ReadFile(%q) error = %v", stagingPath, err)
+	}
+
+	stagingWorkflow := string(stagingContents)
+	authIndex := strings.Index(stagingWorkflow, "- id: auth")
+	if authIndex < 0 {
+		t.Fatal("staging workflow is missing the access-token authentication step")
+	}
+	loginIndex := strings.Index(stagingWorkflow, "- name: Authenticate Docker client to Artifact Registry")
+	if loginIndex < 0 {
+		t.Fatal("staging workflow is missing static Docker registry authentication")
+	}
+	buildIndex := strings.Index(stagingWorkflow, "- name: Build and push immutable staging image")
+	if buildIndex < 0 {
+		t.Fatal("staging workflow is missing the image build step")
+	}
+	if authIndex > loginIndex || loginIndex > buildIndex {
+		t.Fatal("staging registry authentication is not ordered before the image build")
+	}
+	for _, required := range []string{
+		"token_format: access_token",
+		"docker/login-action@dbcb813823bdd20940b903addbd779551569679f",
+		"username: oauth2accesstoken",
+		"password: ${{ steps.auth.outputs.access_token }}",
+		"logout: true",
+	} {
+		if !strings.Contains(stagingWorkflow, required) {
+			t.Fatalf("staging workflow is missing %q", required)
+		}
+	}
+	if strings.Contains(stagingWorkflow, "gcloud auth configure-docker") {
+		t.Fatal("staging workflow retains an unsupported Docker credential helper")
+	}
+
+	verifierPath := filepath.Join("..", "..", ".github", "actions", "verify-broker-evidence", "action.yml")
+	verifierContents, err := os.ReadFile(verifierPath)
+	if err != nil {
+		t.Fatalf("ReadFile(%q) error = %v", verifierPath, err)
+	}
+
+	verifier := string(verifierContents)
+	for _, required := range []string{
+		"docker_config=\"$(mktemp -d)\"",
+		"export DOCKER_CONFIG=\"$docker_config\"",
+		"gcloud auth print-access-token",
+		"docker login \"$registry\" --username oauth2accesstoken --password-stdin",
+		"unset access_token",
+		"docker logout \"$registry\"",
+		"rm -rf \"$docker_config\" \"$evidence_directory\"",
+	} {
+		if !strings.Contains(verifier, required) {
+			t.Fatalf("evidence verifier is missing %q", required)
+		}
+	}
+	if strings.Contains(verifier, "gcloud auth configure-docker") {
+		t.Fatal("evidence verifier retains an unsupported Docker credential helper")
+	}
+}
+
+func TestEvidenceVerifierCallersCreateGoogleCredentialsFiles(t *testing.T) {
+	root := filepath.Join("..", "..")
+	for _, path := range []string{
+		filepath.Join(".github", "workflows", "gcp-broker-production.yml"),
+		filepath.Join(".github", "workflows", "gcp-broker-production-promotion.yml"),
+		filepath.Join(".github", "workflows", "gcp-reconciliation-publisher-production.yml"),
+		filepath.Join(".github", "workflows", "gcp-reconciliation-publisher-promotion.yml"),
+		filepath.Join(".github", "workflows", "gcp-release-credential-verification-production.yml"),
+		filepath.Join(".github", "workflows", "gcp-release-credential-verification-promotion.yml"),
+		filepath.Join(".github", "workflows", "gcp-hotfix-delivery-production.yml"),
+		filepath.Join(".github", "workflows", "gcp-hotfix-delivery-promotion.yml"),
+		filepath.Join(".github", "workflows", "gcp-hotfix-propagation-publisher-production.yml"),
+		filepath.Join(".github", "workflows", "gcp-hotfix-propagation-publisher-promotion.yml"),
+	} {
+		contents, err := os.ReadFile(filepath.Join(root, path))
+		if err != nil {
+			t.Fatalf("ReadFile(%q) error = %v", path, err)
+		}
+
+		workflow := string(contents)
+		if !strings.Contains(workflow, "uses: ./.github/actions/verify-broker-evidence") {
+			t.Fatalf("workflow %q does not call the evidence verifier", path)
+		}
+		if !strings.Contains(workflow, "create_credentials_file: true") {
+			t.Fatalf("workflow %q does not provide Google credentials to the evidence verifier", path)
+		}
 	}
 }

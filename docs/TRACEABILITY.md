@@ -1,8 +1,22 @@
 # Traceability
 
-## GOV-60: Upgrade Cosign installer for v3 bundles
+## GOV-61: Authenticate registry attestations
 
 Status: in implementation.
+
+Scope:
+
+```text
+Use a short-lived Workload Identity Federation access token to create static
+Docker registry auth for GitHub attestation uploads. Keep the token out of
+logs, use password-stdin, isolate composite verification auth in a temporary
+Docker configuration, and remove it after use. Lock the contract with
+same-package workflow tests.
+```
+
+## GOV-60: Upgrade Cosign installer for v3 bundles
+
+Status: integrated into develop through PR #33.
 
 Scope:
 
