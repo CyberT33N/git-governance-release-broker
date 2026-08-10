@@ -330,8 +330,23 @@ func TestCosignOCIReferrerModeUsesStepScopedExperimentalMode(t *testing.T) {
 	if !strings.Contains(signatureStep, "COSIGN_EXPERIMENTAL: \"1\"") {
 		t.Fatal("staging Cosign signature step is missing step-scoped experimental mode")
 	}
+	if !strings.Contains(signatureStep, "cosign sign --yes --registry-referrers-mode=oci-1-1 \"$IMAGE\"") {
+		t.Fatal("staging Cosign signature step is missing the OCI referrers signing mode")
+	}
 	if strings.Contains(stagingWorkflow[:signatureStepStart], "COSIGN_EXPERIMENTAL") {
 		t.Fatal("staging workflow enables experimental Cosign mode outside the signature step")
+	}
+	stagingVerifyStart := strings.Index(signatureStep, "cosign verify \\")
+	if stagingVerifyStart < 0 {
+		t.Fatal("staging Cosign signature step is missing verification")
+	}
+	stagingVerifyEnd := strings.Index(signatureStep[stagingVerifyStart:], "$IMAGE\" >/dev/null")
+	if stagingVerifyEnd < 0 {
+		t.Fatal("staging Cosign verification is missing its image target")
+	}
+	stagingVerify := signatureStep[stagingVerifyStart : stagingVerifyStart+stagingVerifyEnd]
+	if strings.Contains(stagingVerify, "--registry-referrers-mode") {
+		t.Fatal("staging Cosign verification uses unsupported OCI referrers mode")
 	}
 
 	verifierPath := filepath.Join("..", "..", ".github", "actions", "verify-broker-evidence", "action.yml")
@@ -350,5 +365,18 @@ func TestCosignOCIReferrerModeUsesStepScopedExperimentalMode(t *testing.T) {
 	}
 	if strings.Contains(verifier[:verificationStepStart], "COSIGN_EXPERIMENTAL") {
 		t.Fatal("evidence verifier enables experimental Cosign mode outside the verification step")
+	}
+	verifierVerifyStart := strings.Index(verifier[verificationStepStart:], "cosign verify \\")
+	if verifierVerifyStart < 0 {
+		t.Fatal("evidence verifier is missing Cosign verification")
+	}
+	verifierVerifyStart += verificationStepStart
+	verifierVerifyEnd := strings.Index(verifier[verifierVerifyStart:], "$source_image\" >/dev/null")
+	if verifierVerifyEnd < 0 {
+		t.Fatal("evidence verifier is missing its image target")
+	}
+	verifierVerify := verifier[verifierVerifyStart : verifierVerifyStart+verifierVerifyEnd]
+	if strings.Contains(verifierVerify, "--registry-referrers-mode") {
+		t.Fatal("evidence verifier uses unsupported OCI referrers mode")
 	}
 }
