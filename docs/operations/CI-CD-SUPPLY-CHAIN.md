@@ -75,9 +75,11 @@ delivery.
 
 ## Cosign v3 evidence contract
 
-The staging signer and composite evidence verifier explicitly install Cosign
-`v3.1.3`. The installer action release and the installed Cosign binary version
-are separate contracts; the workflow must set `cosign-release` explicitly.
+The staging signer and composite evidence verifier explicitly pin
+`sigstore/cosign-installer` `v4.1.2` and the Cosign binary `v3.1.3`. The
+installer action release and installed binary version are separate contracts;
+both pins are required so the installer can verify the V3 keyless release
+bundles before making the binary available to the workflow.
 
 Cosign v3 uses bundle-based OCI evidence by default. The broker workflows use
 that default and do not retain the former experimental OCI environment setting,

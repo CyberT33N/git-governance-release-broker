@@ -27,7 +27,7 @@ func TestWorkflowContracts(t *testing.T) {
 				"GCP_STAGING_EVIDENCE_ARTIFACT_REPOSITORY",
 				"anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610",
 				"actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6",
-				"sigstore/cosign-installer@4959ce089c160fddf62f7b42464195ba1a56d382",
+				"sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6",
 				"cosign-release: v3.1.3",
 				"cosign sign --yes \"$IMAGE\"",
 				"gcloud artifacts generic upload",
@@ -36,13 +36,14 @@ func TestWorkflowContracts(t *testing.T) {
 				"COSIGN_EXPERIMENTAL",
 				"--registry-referrers-mode",
 				"--experimental-oci11",
+				"sigstore/cosign-installer@4959ce089c160fddf62f7b42464195ba1a56d382",
 			},
 		},
 		{
 			name: "container evidence verifier",
 			path: filepath.Join(".github", "actions", "verify-broker-evidence", "action.yml"),
 			required: []string{
-				"sigstore/cosign-installer@4959ce089c160fddf62f7b42464195ba1a56d382",
+				"sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6",
 				"cosign-release: v3.1.3",
 				"gcloud artifacts generic download",
 				"cosign verify",
@@ -61,6 +62,7 @@ func TestWorkflowContracts(t *testing.T) {
 				"COSIGN_EXPERIMENTAL",
 				"--registry-referrers-mode",
 				"--experimental-oci11",
+				"sigstore/cosign-installer@4959ce089c160fddf62f7b42464195ba1a56d382",
 			},
 		},
 		{
@@ -336,6 +338,9 @@ func TestCosignV3UsesBundleDefaults(t *testing.T) {
 		t.Fatal("staging workflow is missing the provenance step after Cosign")
 	}
 	signatureStep := stagingWorkflow[signatureStepStart : signatureStepStart+signatureStepEnd]
+	if !strings.Contains(stagingWorkflow, "sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6") {
+		t.Fatal("staging workflow does not pin the Cosign v3-compatible installer")
+	}
 	if !strings.Contains(stagingWorkflow, "cosign-release: v3.1.3") {
 		t.Fatal("staging workflow does not pin Cosign v3.1.3")
 	}
@@ -374,6 +379,9 @@ func TestCosignV3UsesBundleDefaults(t *testing.T) {
 	verificationStepStart := strings.Index(verifier, "- id: verify")
 	if verificationStepStart < 0 {
 		t.Fatal("evidence verifier is missing the Cosign verification step")
+	}
+	if !strings.Contains(verifier, "sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6") {
+		t.Fatal("evidence verifier does not pin the Cosign v3-compatible installer")
 	}
 	if !strings.Contains(verifier, "cosign-release: v3.1.3") {
 		t.Fatal("evidence verifier does not pin Cosign v3.1.3")
