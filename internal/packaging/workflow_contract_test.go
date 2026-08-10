@@ -28,6 +28,7 @@ func TestWorkflowContracts(t *testing.T) {
 				"anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610",
 				"actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6",
 				"cosign sign --yes --registry-referrers-mode=oci-1-1",
+				"COSIGN_EXPERIMENTAL: \"1\"",
 				"gcloud artifacts generic upload",
 			},
 		},
@@ -43,6 +44,7 @@ func TestWorkflowContracts(t *testing.T) {
 				"--bundle-from-oci",
 				"--deny-self-hosted-runners",
 				"--source-digest",
+				"COSIGN_EXPERIMENTAL: \"1\"",
 				"provenance_bundle_sha256",
 				"sbom_bundle_sha256",
 			},
@@ -305,5 +307,48 @@ func TestStagingWorkflowPreparesEvidenceWorkspaceBeforeSBOM(t *testing.T) {
 	}
 	if workspaceIndex > sbomIndex {
 		t.Fatal("staging evidence workspace is prepared after SBOM generation")
+	}
+}
+
+func TestCosignOCIReferrerModeUsesStepScopedExperimentalMode(t *testing.T) {
+	stagingPath := filepath.Join("..", "..", ".github", "workflows", "gcp-broker-staging.yml")
+	stagingContents, err := os.ReadFile(stagingPath)
+	if err != nil {
+		t.Fatalf("ReadFile(%q) error = %v", stagingPath, err)
+	}
+
+	stagingWorkflow := string(stagingContents)
+	signatureStepStart := strings.Index(stagingWorkflow, "- name: Sign and verify immutable staging image")
+	if signatureStepStart < 0 {
+		t.Fatal("staging workflow is missing the Cosign signature step")
+	}
+	signatureStepEnd := strings.Index(stagingWorkflow[signatureStepStart:], "- id: provenance")
+	if signatureStepEnd < 0 {
+		t.Fatal("staging workflow is missing the provenance step after Cosign")
+	}
+	signatureStep := stagingWorkflow[signatureStepStart : signatureStepStart+signatureStepEnd]
+	if !strings.Contains(signatureStep, "COSIGN_EXPERIMENTAL: \"1\"") {
+		t.Fatal("staging Cosign signature step is missing step-scoped experimental mode")
+	}
+	if strings.Contains(stagingWorkflow[:signatureStepStart], "COSIGN_EXPERIMENTAL") {
+		t.Fatal("staging workflow enables experimental Cosign mode outside the signature step")
+	}
+
+	verifierPath := filepath.Join("..", "..", ".github", "actions", "verify-broker-evidence", "action.yml")
+	verifierContents, err := os.ReadFile(verifierPath)
+	if err != nil {
+		t.Fatalf("ReadFile(%q) error = %v", verifierPath, err)
+	}
+
+	verifier := string(verifierContents)
+	verificationStepStart := strings.Index(verifier, "- id: verify")
+	if verificationStepStart < 0 {
+		t.Fatal("evidence verifier is missing the Cosign verification step")
+	}
+	if !strings.Contains(verifier[verificationStepStart:], "COSIGN_EXPERIMENTAL: \"1\"") {
+		t.Fatal("evidence verifier is missing step-scoped experimental mode")
+	}
+	if strings.Contains(verifier[:verificationStepStart], "COSIGN_EXPERIMENTAL") {
+		t.Fatal("evidence verifier enables experimental Cosign mode outside the verification step")
 	}
 }
