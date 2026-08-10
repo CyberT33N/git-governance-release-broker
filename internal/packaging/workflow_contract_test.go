@@ -282,3 +282,28 @@ func TestWorkflowContracts(t *testing.T) {
 		t.Fatalf("retired develop-bound deployment workflow error = %v", err)
 	}
 }
+
+func TestStagingWorkflowPreparesEvidenceWorkspaceBeforeSBOM(t *testing.T) {
+	workflowPath := filepath.Join("..", "..", ".github", "workflows", "gcp-broker-staging.yml")
+	contents, err := os.ReadFile(workflowPath)
+	if err != nil {
+		t.Fatalf("ReadFile(%q) error = %v", workflowPath, err)
+	}
+
+	workflow := string(contents)
+	workspaceIndex := strings.Index(workflow, "- name: Prepare staging evidence workspace")
+	if workspaceIndex < 0 {
+		t.Fatal("staging workflow is missing the evidence workspace step")
+	}
+	if !strings.Contains(workflow[workspaceIndex:], "mkdir -p .build/evidence") {
+		t.Fatal("staging evidence workspace step does not create .build/evidence")
+	}
+
+	sbomIndex := strings.Index(workflow, "- name: Generate staging image SBOM")
+	if sbomIndex < 0 {
+		t.Fatal("staging workflow is missing the SBOM generation step")
+	}
+	if workspaceIndex > sbomIndex {
+		t.Fatal("staging evidence workspace is prepared after SBOM generation")
+	}
+}
