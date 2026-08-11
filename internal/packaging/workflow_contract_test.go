@@ -25,6 +25,12 @@ func TestWorkflowContracts(t *testing.T) {
 				"BROKER_CREDENTIAL_PROFILE=release-automation",
 				"attestations: write",
 				"GCP_STAGING_EVIDENCE_ARTIFACT_REPOSITORY",
+				"GCP_STAGING_BUILDER_ARTIFACT_REPOSITORY",
+				"GCP_STAGING_BUILDER_EVIDENCE_ARTIFACT_REPOSITORY",
+				"GCP_STAGING_BUILDER_IMAGE",
+				"GCP_STAGING_BUILDER_SIGNER_REPOSITORY",
+				"GCP_STAGING_BUILDER_SIGNER_WORKFLOW",
+				"GCP_STAGING_BUILDER_SOURCE_REF",
 				"anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610",
 				"actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6",
 				"sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6",
@@ -544,7 +550,17 @@ func TestStagingWorkflowMaterializesEGP1Subjects(t *testing.T) {
 
 	workflow := string(contents)
 	for _, required := range []string{
+		"GCP_STAGING_BUILDER_ARTIFACT_REPOSITORY",
+		"GCP_STAGING_BUILDER_EVIDENCE_ARTIFACT_REPOSITORY",
+		"GCP_STAGING_BUILDER_IMAGE",
+		"GCP_STAGING_BUILDER_SIGNER_REPOSITORY",
+		"GCP_STAGING_BUILDER_SIGNER_WORKFLOW",
+		"GCP_STAGING_BUILDER_SOURCE_REF",
+		"Verify approved builder artifact evidence",
+		"./.github/actions/verify-broker-builder-evidence",
 		"Materialize local builder and isolated dependency evidence",
+		"BUILDER_SUBJECT_ID",
+		"BUILDER_CANONICAL_PAYLOAD_DIGEST",
 		"--network=none",
 		"docker pull --platform=linux/amd64 \"$builder_image\"",
 		"local_builder_image=\"broker-local-builder:${builder_digest#sha256:}\"",
@@ -576,6 +592,10 @@ func TestStagingWorkflowMaterializesEGP1Subjects(t *testing.T) {
 		"go_toolchain",
 		"dependency_resolution:",
 		"admission: {",
+		"artifact_subject_id: $builder_subject_id",
+		"canonical_payload_digest: $builder_canonical_payload_digest",
+		"package: \"broker-builder-evidence\"",
+		"local_materialization:",
 		"phase_status_at_issuance:",
 	} {
 		if !strings.Contains(workflow, required) {
@@ -593,13 +613,14 @@ func TestStagingWorkflowMaterializesEGP1Subjects(t *testing.T) {
 		}
 	}
 
-	dependencyIndex := strings.Index(workflow, "- name: Materialize local builder and isolated dependency evidence")
+	builderVerificationIndex := strings.Index(workflow, "- id: builder-evidence")
+	dependencyIndex := strings.Index(workflow, "- id: builder-materialization")
 	buildIndex := strings.Index(workflow, "- name: Build immutable staging image")
 	pushIndex := strings.Index(workflow, "- name: Push immutable staging image")
 	sbomIndex := strings.Index(workflow, "- name: Generate staging image SBOM")
-	if dependencyIndex < 0 || buildIndex < 0 || pushIndex < 0 || sbomIndex < 0 ||
-		dependencyIndex > buildIndex || buildIndex > pushIndex || pushIndex > sbomIndex {
-		t.Fatal("staging builder and dependency evidence is not materialized before the isolated local build and image publication")
+	if builderVerificationIndex < 0 || dependencyIndex < 0 || buildIndex < 0 || pushIndex < 0 || sbomIndex < 0 ||
+		builderVerificationIndex > dependencyIndex || dependencyIndex > buildIndex || buildIndex > pushIndex || pushIndex > sbomIndex {
+		t.Fatal("staging builder evidence is not verified before offline consumption and image publication")
 	}
 	deployIndex := strings.Index(workflow, "gcloud run deploy")
 	recordIndex := strings.Index(workflow, "uses: ./.github/actions/record-broker-deployment-evidence")
@@ -616,7 +637,7 @@ func TestStagingWorkflowUsesMaterializedLocalBuilderForOfflineConsumer(t *testin
 	}
 
 	workflow := strings.ReplaceAll(string(contents), "\r\n", "\n")
-	materializationStart := strings.Index(workflow, "- name: Materialize local builder and isolated dependency evidence")
+	materializationStart := strings.Index(workflow, "- id: builder-materialization")
 	buildStart := strings.Index(workflow, "- name: Build immutable staging image")
 	if materializationStart < 0 || buildStart < 0 || materializationStart > buildStart {
 		t.Fatal("staging workflow does not materialize the local builder before the final image build")
@@ -631,6 +652,8 @@ func TestStagingWorkflowUsesMaterializedLocalBuilderForOfflineConsumer(t *testin
 	}
 
 	for _, required := range []string{
+		"BUILDER_IMAGE: ${{ steps.builder-evidence.outputs.image }}",
+		"builder_image=\"$BUILDER_IMAGE\"",
 		"builder_digest=\"${builder_image##*@}\"",
 		"[[ \"$builder_digest\" =~ ^sha256:[0-9a-f]{64}$ ]]",
 		"local_builder_digests=\"$(docker image inspect \"$local_builder_image\" --format '{{range .RepoDigests}}{{println .}}{{end}}')\"",
@@ -640,6 +663,7 @@ func TestStagingWorkflowUsesMaterializedLocalBuilderForOfflineConsumer(t *testin
 		"\"$local_builder_image\" mod verify",
 		"\"$local_builder_image\" test -mod=readonly ./...",
 		"\"$local_builder_image\" env GOVERSION",
+		"echo \"local-image=$local_builder_image\" >> \"$GITHUB_OUTPUT\"",
 		"--pull=never",
 		"--network=none",
 	} {
@@ -648,6 +672,7 @@ func TestStagingWorkflowUsesMaterializedLocalBuilderForOfflineConsumer(t *testin
 		}
 	}
 	for _, forbidden := range []string{
+		"awk '$1 == \"FROM\"",
 		"\"$builder_image\" list -m -json all",
 		"\"$builder_image\" mod verify",
 		"\"$builder_image\" test -mod=readonly ./...",
@@ -663,11 +688,108 @@ func TestStagingWorkflowUsesMaterializedLocalBuilderForOfflineConsumer(t *testin
 		t.Fatal("staging workflow is missing image publication after the final image build")
 	}
 	buildStep := workflow[buildStart : buildStart+buildEnd]
-	if !strings.Contains(buildStep, "docker build --platform=linux/amd64 --pull=false --network=none --tag \"$image\" .") {
+	if !strings.Contains(buildStep, "LOCAL_BUILDER_IMAGE: ${{ steps.builder-materialization.outputs.local-image }}") ||
+		!strings.Contains(buildStep, "docker build --platform=linux/amd64 --pull=false --network=none --build-arg \"BUILDER_IMAGE=$LOCAL_BUILDER_IMAGE\" --tag \"$image\" .") {
 		t.Fatal("final staging image build is not explicitly local and network-isolated")
+	}
+	if strings.Contains(buildStep, "BUILDER_IMAGE=$BUILDER_IMAGE") {
+		t.Fatal("final staging image build retains the non-local builder reference")
 	}
 	if strings.Contains(buildStep, " --pull ") {
 		t.Fatal("final staging image build retains an implicit builder refresh")
+	}
+}
+
+func TestBrokerDockerfileRequiresExplicitBuilderArtifact(t *testing.T) {
+	dockerfilePath := filepath.Join("..", "..", "Dockerfile")
+	contents, err := os.ReadFile(dockerfilePath)
+	if err != nil {
+		t.Fatalf("ReadFile(%q) error = %v", dockerfilePath, err)
+	}
+
+	dockerfile := string(contents)
+	for _, required := range []string{
+		"ARG BUILDER_IMAGE",
+		"FROM --platform=linux/amd64 ${BUILDER_IMAGE} AS build",
+	} {
+		if !strings.Contains(dockerfile, required) {
+			t.Fatalf("Dockerfile is missing explicit builder contract %q", required)
+		}
+	}
+	if strings.Contains(dockerfile, "golang@sha256:") {
+		t.Fatal("Dockerfile retains a direct public builder fallback")
+	}
+}
+
+func TestBuilderEvidenceVerifierRequiresCompleteApprovedBuilderEvidence(t *testing.T) {
+	root := filepath.Join("..", "..", ".github", "actions", "verify-broker-builder-evidence")
+	actionPath := filepath.Join(root, "action.yml")
+	scriptPath := filepath.Join(root, "verify.sh")
+
+	actionContents, err := os.ReadFile(actionPath)
+	if err != nil {
+		t.Fatalf("ReadFile(%q) error = %v", actionPath, err)
+	}
+	scriptContents, err := os.ReadFile(scriptPath)
+	if err != nil {
+		t.Fatalf("ReadFile(%q) error = %v", scriptPath, err)
+	}
+
+	action := string(actionContents)
+	script := string(scriptContents)
+	for _, required := range []string{
+		"image:",
+		"artifact-repository:",
+		"evidence-repository:",
+		"signer-repository:",
+		"signer-workflow:",
+		"source-ref:",
+		"sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6",
+		"bash \"$GITHUB_ACTION_PATH/verify.sh\"",
+	} {
+		if !strings.Contains(action, required) {
+			t.Fatalf("builder evidence action is missing %q", required)
+		}
+	}
+	for _, required := range []string{
+		"broker-builder-evidence",
+		"BUILDER_SIGNER_REPOSITORY",
+		"builder.subject.json",
+		"builder.spdx.json",
+		"builder.signature.json",
+		"builder.provenance.intoto.jsonl",
+		"builder.sbom.intoto.jsonl",
+		"builder.policy.json",
+		"builder.approval.json",
+		"builder.revocation.json",
+		"artifact.kind == \"builder\"",
+		".lifecycle.status == \"verified\"",
+		"verify_evidence sbom builder.spdx.json",
+		"verify_evidence signature builder.signature.json",
+		"verify_evidence provenance builder.provenance.intoto.jsonl",
+		"verify_evidence attestation builder.sbom.intoto.jsonl",
+		"verify_evidence policy builder.policy.json",
+		"verify_evidence approval builder.approval.json",
+		"verify_evidence revocation builder.revocation.json",
+		"cosign verify-blob",
+		"cosign verify",
+		"gh attestation verify",
+		"--repo \"$BUILDER_SIGNER_REPOSITORY\"",
+		"--deny-self-hosted-runners",
+	} {
+		if !strings.Contains(script, required) {
+			t.Fatalf("builder evidence verifier is missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{
+		"gcloud auth configure-docker",
+		"docker build",
+		"gcloud run deploy",
+		"latest",
+	} {
+		if strings.Contains(script, forbidden) {
+			t.Fatalf("builder evidence verifier contains forbidden %q", forbidden)
+		}
 	}
 }
 
@@ -695,6 +817,14 @@ func TestEvidenceVerifierRequiresEGP1SubjectsAndVerifiedPromotion(t *testing.T) 
 		"canonical_payload_digest",
 		"utf8-json-sorted-keys-v1",
 		"cosign verify-blob",
+		"builder_subject_id=",
+		"builder_evidence_repository=",
+		".build.builder.artifact_subject_id",
+		".build.builder.local_materialization.verified == true",
+		".build.builder.signer_repository",
+		"broker-builder-evidence",
+		"verify-broker-builder-evidence/verify.sh",
+		"GITHUB_OUTPUT=/dev/null",
 		".dependency_resolution.admission.status == \"verified\"",
 		".lifecycle.status == \"verified\"",
 		".lifecycle.phase_references.source_artifact_canonical_payload_digest",

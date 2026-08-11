@@ -93,6 +93,12 @@ GCP_STAGING_WORKLOAD_IDENTITY_PROVIDER
 GCP_STAGING_DEPLOYER_SERVICE_ACCOUNT
 GCP_STAGING_ARTIFACT_REPOSITORY
 GCP_STAGING_EVIDENCE_ARTIFACT_REPOSITORY
+GCP_STAGING_BUILDER_ARTIFACT_REPOSITORY
+GCP_STAGING_BUILDER_EVIDENCE_ARTIFACT_REPOSITORY
+GCP_STAGING_BUILDER_IMAGE
+GCP_STAGING_BUILDER_SIGNER_REPOSITORY
+GCP_STAGING_BUILDER_SIGNER_WORKFLOW
+GCP_STAGING_BUILDER_SOURCE_REF
 GCP_STAGING_BROKER_SERVICE
 GCP_STAGING_RUNTIME_SERVICE_ACCOUNT
 GCP_STAGING_INVOKER_SERVICE_ACCOUNT
@@ -104,8 +110,18 @@ GCP_STAGING_BROKER_ALLOWED_REPOSITORIES
 
 The staging deployer has Artifact Registry writer for the staging image and
 staging evidence repositories, Cloud Run deployment, and Service Account User
-permissions only for staging resources. The staging runtime identity reads only
-its staging GitHub App key secret.
+permissions only for staging resources. It also needs Artifact Registry Reader
+only for the configured internal builder image and builder evidence
+repositories. The staging runtime identity reads only its staging GitHub App
+key secret.
+
+`GCP_STAGING_BUILDER_IMAGE` is a non-secret, full immutable internal
+`builder@sha256:` reference. Its accompanying repository, evidence repository,
+trusted signer repository and workflow, and signer source ref identify the
+separate approved builder-artifact lane. The staging workflow rejects a
+missing, public, mutable, mismatched, pending, revoked, quarantined,
+superseded, or otherwise unverifiable builder before it starts the offline
+consumer phase.
 
 ## Production release-automation resources
 

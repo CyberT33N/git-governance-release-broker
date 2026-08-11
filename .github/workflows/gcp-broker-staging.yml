@@ -101,6 +101,12 @@ jobs:
       GCP_DEPLOYER_SERVICE_ACCOUNT: ${{ vars.GCP_STAGING_DEPLOYER_SERVICE_ACCOUNT }}
       ARTIFACT_REPOSITORY: ${{ vars.GCP_STAGING_ARTIFACT_REPOSITORY }}
       EVIDENCE_ARTIFACT_REPOSITORY: ${{ vars.GCP_STAGING_EVIDENCE_ARTIFACT_REPOSITORY }}
+      BUILDER_ARTIFACT_REPOSITORY: ${{ vars.GCP_STAGING_BUILDER_ARTIFACT_REPOSITORY }}
+      BUILDER_EVIDENCE_ARTIFACT_REPOSITORY: ${{ vars.GCP_STAGING_BUILDER_EVIDENCE_ARTIFACT_REPOSITORY }}
+      BUILDER_IMAGE: ${{ vars.GCP_STAGING_BUILDER_IMAGE }}
+      BUILDER_SIGNER_REPOSITORY: ${{ vars.GCP_STAGING_BUILDER_SIGNER_REPOSITORY }}
+      BUILDER_SIGNER_WORKFLOW: ${{ vars.GCP_STAGING_BUILDER_SIGNER_WORKFLOW }}
+      BUILDER_SOURCE_REF: ${{ vars.GCP_STAGING_BUILDER_SOURCE_REF }}
       BROKER_SERVICE: ${{ vars.GCP_STAGING_BROKER_SERVICE }}
       RUNTIME_SERVICE_ACCOUNT: ${{ vars.GCP_STAGING_RUNTIME_SERVICE_ACCOUNT }}
       INVOKER_SERVICE_ACCOUNT: ${{ vars.GCP_STAGING_INVOKER_SERVICE_ACCOUNT }}
@@ -119,7 +125,7 @@ jobs:
         run: |
           set -euo pipefail
           test "$GITHUB_REF" = "refs/heads/develop"
-          for variable in GCP_PROJECT_ID GCP_REGION GCP_SDK_VERSION GCP_WORKLOAD_IDENTITY_PROVIDER GCP_DEPLOYER_SERVICE_ACCOUNT ARTIFACT_REPOSITORY EVIDENCE_ARTIFACT_REPOSITORY BROKER_SERVICE RUNTIME_SERVICE_ACCOUNT INVOKER_SERVICE_ACCOUNT BROKER_SECRET BROKER_APP_ID BROKER_APP_INSTALLATION_ID BROKER_ALLOWED_REPOSITORIES; do
+          for variable in GCP_PROJECT_ID GCP_REGION GCP_SDK_VERSION GCP_WORKLOAD_IDENTITY_PROVIDER GCP_DEPLOYER_SERVICE_ACCOUNT ARTIFACT_REPOSITORY EVIDENCE_ARTIFACT_REPOSITORY BUILDER_ARTIFACT_REPOSITORY BUILDER_EVIDENCE_ARTIFACT_REPOSITORY BUILDER_IMAGE BUILDER_SIGNER_REPOSITORY BUILDER_SIGNER_WORKFLOW BUILDER_SOURCE_REF BROKER_SERVICE RUNTIME_SERVICE_ACCOUNT INVOKER_SERVICE_ACCOUNT BROKER_SECRET BROKER_APP_ID BROKER_APP_INSTALLATION_ID BROKER_ALLOWED_REPOSITORIES; do
             test -n "${!variable:-}" || { echo "missing GitHub environment variable: $variable" >&2; exit 1; }
           done
 
@@ -145,17 +151,35 @@ jobs:
           password: ${{ steps.auth.outputs.access_token }}
           logout: true
 
+      - id: builder-evidence
+        name: Verify approved builder artifact evidence
+        uses: ./.github/actions/verify-broker-builder-evidence
+        with:
+          image: ${{ env.BUILDER_IMAGE }}
+          project-id: ${{ env.GCP_PROJECT_ID }}
+          region: ${{ env.GCP_REGION }}
+          artifact-repository: ${{ env.BUILDER_ARTIFACT_REPOSITORY }}
+          evidence-repository: ${{ env.BUILDER_EVIDENCE_ARTIFACT_REPOSITORY }}
+          signer-repository: ${{ env.BUILDER_SIGNER_REPOSITORY }}
+          signer-workflow: ${{ env.BUILDER_SIGNER_WORKFLOW }}
+          source-ref: ${{ env.BUILDER_SOURCE_REF }}
+
       - name: Prepare staging evidence workspace
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p .build/evidence
 
-      - name: Materialize local builder and isolated dependency evidence
+      - id: builder-materialization
+        name: Materialize local builder and isolated dependency evidence
         shell: bash
+        env:
+          BUILDER_IMAGE: ${{ steps.builder-evidence.outputs.image }}
+          BUILDER_SUBJECT_ID: ${{ steps.builder-evidence.outputs.subject-id }}
+          BUILDER_CANONICAL_PAYLOAD_DIGEST: ${{ steps.builder-evidence.outputs.canonical-payload-digest }}
         run: |
           set -euo pipefail
-          builder_image="$(awk '$1 == "FROM" && $2 == "--platform=linux/amd64" && $3 ~ /^golang@sha256:/ { print $3; exit }' Dockerfile)"
+          builder_image="$BUILDER_IMAGE"
           test -n "$builder_image"
           builder_digest="${builder_image##*@}"
           [[ "$builder_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
@@ -202,6 +226,9 @@ jobs:
           jq -n \
             --arg source_commit "$GITHUB_SHA" \
             --arg builder_image "$builder_image" \
+            --arg builder_subject_id "$BUILDER_SUBJECT_ID" \
+            --arg builder_digest "$builder_digest" \
+            --arg builder_canonical_payload_digest "$BUILDER_CANONICAL_PAYLOAD_DIGEST" \
             --arg go_toolchain "$go_toolchain" \
             --arg issued_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             '{
@@ -209,6 +236,9 @@ jobs:
               evidence_type: "test",
               source_commit: $source_commit,
               builder_image: $builder_image,
+              builder_subject_id: $builder_subject_id,
+              builder_digest: $builder_digest,
+              builder_canonical_payload_digest: $builder_canonical_payload_digest,
               go_toolchain: $go_toolchain,
               commands: [
                 "GOPROXY=off GOTOOLCHAIN=local GOFLAGS=-mod=readonly go mod verify",
@@ -217,17 +247,21 @@ jobs:
               status: "passed",
               issued_at: $issued_at
             }' > .build/evidence/test-result.json
+          echo "local-image=$local_builder_image" >> "$GITHUB_OUTPUT"
 
       - name: Build immutable staging image
         id: image-build
         shell: bash
+        env:
+          LOCAL_BUILDER_IMAGE: ${{ steps.builder-materialization.outputs.local-image }}
         run: |
           set -euo pipefail
+          test -n "$LOCAL_BUILDER_IMAGE"
           gcloud artifacts repositories describe "$ARTIFACT_REPOSITORY" \
             --location="$GCP_REGION" \
             --project="$GCP_PROJECT_ID" >/dev/null
           image="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${ARTIFACT_REPOSITORY}/broker:sha-${GITHUB_SHA}"
-          docker build --platform=linux/amd64 --pull=false --network=none --tag "$image" .
+          docker build --platform=linux/amd64 --pull=false --network=none --build-arg "BUILDER_IMAGE=$LOCAL_BUILDER_IMAGE" --tag "$image" .
           echo "tag=${image}" >> "$GITHUB_OUTPUT"
           echo "repository=${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${ARTIFACT_REPOSITORY}/broker" >> "$GITHUB_OUTPUT"
 
@@ -302,6 +336,14 @@ jobs:
           DIGEST: ${{ steps.image.outputs.digest }}
           PROVENANCE_BUNDLE: ${{ steps.provenance.outputs.bundle-path }}
           SBOM_BUNDLE: ${{ steps.sbom.outputs.bundle-path }}
+          BUILDER_IMAGE: ${{ steps.builder-evidence.outputs.image }}
+          BUILDER_SUBJECT_ID: ${{ steps.builder-evidence.outputs.subject-id }}
+          BUILDER_CANONICAL_PAYLOAD_DIGEST: ${{ steps.builder-evidence.outputs.canonical-payload-digest }}
+          BUILDER_ARTIFACT_REPOSITORY: ${{ env.BUILDER_ARTIFACT_REPOSITORY }}
+          BUILDER_EVIDENCE_ARTIFACT_REPOSITORY: ${{ env.BUILDER_EVIDENCE_ARTIFACT_REPOSITORY }}
+          BUILDER_SIGNER_REPOSITORY: ${{ env.BUILDER_SIGNER_REPOSITORY }}
+          BUILDER_SIGNER_WORKFLOW: ${{ env.BUILDER_SIGNER_WORKFLOW }}
+          BUILDER_SOURCE_REF: ${{ env.BUILDER_SOURCE_REF }}
         run: |
           set -euo pipefail
           package_directory=".build/evidence/package"
@@ -334,14 +376,25 @@ jobs:
           dockerfile_sha256="$(sha256sum Dockerfile | awk '{print $1}')"
           go_directive="$(awk '$1 == "go" { print $2; exit }' go.mod)"
           go_toolchain="$(awk '$1 == "toolchain" { print $2; exit }' go.mod)"
-          builder_image="$(awk '$1 == "FROM" && $2 == "--platform=linux/amd64" && $3 ~ /^golang@sha256:/ { print $3; exit }' Dockerfile)"
+          builder_image="$BUILDER_IMAGE"
+          builder_digest="${builder_image##*@}"
+          builder_evidence_version="${builder_digest#sha256:}"
           test -n "$go_directive"
           test -n "$go_toolchain"
           test -n "$builder_image"
+          test -n "$BUILDER_SUBJECT_ID"
+          test -n "$BUILDER_CANONICAL_PAYLOAD_DIGEST"
+          test -n "$BUILDER_ARTIFACT_REPOSITORY"
+          test -n "$BUILDER_EVIDENCE_ARTIFACT_REPOSITORY"
+          test -n "$BUILDER_SIGNER_REPOSITORY"
+          test -n "$BUILDER_SIGNER_WORKFLOW"
+          test -n "$BUILDER_SOURCE_REF"
+          [[ "$builder_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+          [[ "$BUILDER_CANONICAL_PAYLOAD_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
 
           source_subject_id="source:git-commit:${GITHUB_SHA}"
           dependency_subject_id="dependency-resolution:sha256:${dependency_resolution_sha256}"
-          build_subject_id="build:broker:${GITHUB_SHA}:${dockerfile_sha256}"
+          build_subject_id="build:broker:${GITHUB_SHA}:${dockerfile_sha256}:${builder_evidence_version}"
           artifact_subject_id="artifact:oci-image:${DIGEST}"
 
           jq -n \
@@ -486,6 +539,15 @@ jobs:
             --arg artifact_subject_id "$artifact_subject_id" \
             --arg dockerfile_sha256 "sha256:${dockerfile_sha256}" \
             --arg builder_image "$builder_image" \
+            --arg builder_digest "$builder_digest" \
+            --arg builder_subject_id "$BUILDER_SUBJECT_ID" \
+            --arg builder_canonical_payload_digest "$BUILDER_CANONICAL_PAYLOAD_DIGEST" \
+            --arg builder_artifact_repository "$BUILDER_ARTIFACT_REPOSITORY" \
+            --arg builder_evidence_repository "$BUILDER_EVIDENCE_ARTIFACT_REPOSITORY" \
+            --arg builder_evidence_version "$builder_evidence_version" \
+            --arg builder_signer_repository "$BUILDER_SIGNER_REPOSITORY" \
+            --arg builder_signer_workflow "$BUILDER_SIGNER_WORKFLOW" \
+            --arg builder_source_ref "$BUILDER_SOURCE_REF" \
             --arg go_directive "$go_directive" \
             --arg go_toolchain "$go_toolchain" \
             --arg evidence_repository "$EVIDENCE_ARTIFACT_REPOSITORY" \
@@ -513,6 +575,11 @@ jobs:
                 {
                   relation_type: "built-from",
                   source_subject_id: $dependency_subject_id,
+                  target_subject_id: $build_subject_id
+                },
+                {
+                  relation_type: "built-from",
+                  source_subject_id: $builder_subject_id,
                   target_subject_id: $build_subject_id
                 },
                 {
@@ -554,7 +621,23 @@ jobs:
                   digest: $dockerfile_sha256
                 },
                 builder: {
+                  artifact_subject_id: $builder_subject_id,
                   image: $builder_image,
+                  digest: $builder_digest,
+                  canonical_payload_digest: $builder_canonical_payload_digest,
+                  artifact_repository: $builder_artifact_repository,
+                  evidence: {
+                    repository: $builder_evidence_repository,
+                    package: "broker-builder-evidence",
+                    version: $builder_evidence_version
+                  },
+                  signer_repository: $builder_signer_repository,
+                  signer_workflow: $builder_signer_workflow,
+                  source_ref: $builder_source_ref,
+                  local_materialization: {
+                    verified: true,
+                    mode: "immutable-digest-local-runtime-copy"
+                  },
                   runner_identity: "github-hosted:ubuntu-24.04"
                 },
                 toolchain: {

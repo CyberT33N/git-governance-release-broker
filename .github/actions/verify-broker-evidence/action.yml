@@ -1,5 +1,5 @@
 name: Verify Broker Evidence
-description: Verifies immutable staging evidence before a production deployment.
+description: Re-verifies immutable staging and approved builder evidence before a production deployment.
 
 inputs:
   image:
@@ -211,6 +211,17 @@ runs:
         source_image="$(jq -er '.artifact.reference' "$artifact_subject")"
         artifact_payload_digest="$(jq -er '.integrity.canonical_payload_digest' "$artifact_subject")"
         source_evidence_repository="$(jq -er '.dependency_resolution.module_graph.immutable_reference.repository' "$dependency_subject")"
+        builder_image="$(jq -er '.build.builder.image' "$build_subject")"
+        builder_subject_id="$(jq -er '.build.builder.artifact_subject_id' "$build_subject")"
+        builder_digest="$(jq -er '.build.builder.digest' "$build_subject")"
+        builder_payload_digest="$(jq -er '.build.builder.canonical_payload_digest' "$build_subject")"
+        builder_artifact_repository="$(jq -er '.build.builder.artifact_repository' "$build_subject")"
+        builder_evidence_repository="$(jq -er '.build.builder.evidence.repository' "$build_subject")"
+        builder_evidence_package="$(jq -er '.build.builder.evidence.package' "$build_subject")"
+        builder_evidence_version="$(jq -er '.build.builder.evidence.version' "$build_subject")"
+        builder_signer_repository="$(jq -er '.build.builder.signer_repository' "$build_subject")"
+        builder_signer_workflow="$(jq -er '.build.builder.signer_workflow' "$build_subject")"
+        builder_source_ref="$(jq -er '.build.builder.source_ref' "$build_subject")"
         test -n "$source_evidence_repository"
 
         verify_subject "$source_subject" source "$source_subject_id"
@@ -274,13 +285,35 @@ runs:
           --arg dependency_subject_id "$dependency_subject_id" \
           --arg build_subject_id "$build_subject_id" \
           --arg artifact_subject_id "$artifact_subject_id" \
+          --arg builder_subject_id "$builder_subject_id" \
+          --arg builder_image "$builder_image" \
+          --arg builder_digest "$builder_digest" \
+          --arg builder_payload_digest "$builder_payload_digest" \
+          --arg builder_artifact_repository "$builder_artifact_repository" \
+          --arg builder_evidence_repository "$builder_evidence_repository" \
+          --arg builder_evidence_package "$builder_evidence_package" \
+          --arg builder_evidence_version "$builder_evidence_version" \
+          --arg builder_signer_repository "$builder_signer_repository" \
+          --arg builder_signer_workflow "$builder_signer_workflow" \
+          --arg builder_source_ref "$builder_source_ref" \
           --arg repository "$source_evidence_repository" \
           --arg version "$expected_version" \
           --arg test_result_sha256 "$test_result_sha256" \
-          --arg signer_workflow "$SIGNER_WORKFLOW" \
           '.build.definition.path == "Dockerfile" and
            (.build.definition.digest | test("^sha256:[0-9a-f]{64}$")) and
-           (.build.builder.image | test("^golang@sha256:[0-9a-f]{64}$")) and
+           .build.builder.artifact_subject_id == $builder_subject_id and
+           .build.builder.image == $builder_image and
+           .build.builder.digest == $builder_digest and
+           .build.builder.canonical_payload_digest == $builder_payload_digest and
+           .build.builder.artifact_repository == $builder_artifact_repository and
+           .build.builder.evidence.repository == $builder_evidence_repository and
+           .build.builder.evidence.package == $builder_evidence_package and
+           .build.builder.evidence.version == $builder_evidence_version and
+           .build.builder.signer_repository == $builder_signer_repository and
+           .build.builder.signer_workflow == $builder_signer_workflow and
+           .build.builder.source_ref == $builder_source_ref and
+           .build.builder.local_materialization.verified == true and
+           .build.builder.local_materialization.mode == "immutable-digest-local-runtime-copy" and
            .build.builder.runner_identity == "github-hosted:ubuntu-24.04" and
            (.build.toolchain.go_directive | test("^[0-9]+\\.[0-9]+$")) and
            (.build.toolchain.go_toolchain | test("^go[0-9]+\\.[0-9]+\\.[0-9]+$")) and
@@ -306,6 +339,11 @@ runs:
              .target_subject_id == $build_subject_id
            )] | length) == 1 and
            ([.relations[] | select(
+             .relation_type == "built-from" and
+             .source_subject_id == $builder_subject_id and
+             .target_subject_id == $build_subject_id
+           )] | length) == 1 and
+           ([.relations[] | select(
              .relation_type == "produces" and
              .source_subject_id == $build_subject_id and
              .target_subject_id == $artifact_subject_id
@@ -313,12 +351,32 @@ runs:
           "$build_subject" >/dev/null
         jq -e \
           --arg source_commit "$source_commit" \
+          --arg builder_image "$builder_image" \
+          --arg builder_subject_id "$builder_subject_id" \
+          --arg builder_digest "$builder_digest" \
+          --arg builder_payload_digest "$builder_payload_digest" \
           '(.source_commit == $source_commit) and
            .evidence_type == "test" and
            .status == "passed" and
+           .builder_image == $builder_image and
+           .builder_subject_id == $builder_subject_id and
+           .builder_digest == $builder_digest and
+           .builder_canonical_payload_digest == $builder_payload_digest and
            (.commands | type == "array" and length == 2) and
            (.go_toolchain | test("^go[0-9]+\\.[0-9]+\\.[0-9]+$"))' \
           "$test_result" >/dev/null
+
+        test "$builder_evidence_package" = "broker-builder-evidence"
+        [[ "$builder_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+        [[ "$builder_payload_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+        GITHUB_OUTPUT=/dev/null \
+          BUILDER_IMAGE="$builder_image" \
+          BUILDER_ARTIFACT_REPOSITORY="$builder_artifact_repository" \
+          BUILDER_EVIDENCE_ARTIFACT_REPOSITORY="$builder_evidence_repository" \
+          BUILDER_SIGNER_REPOSITORY="$builder_signer_repository" \
+          BUILDER_SIGNER_WORKFLOW="$builder_signer_workflow" \
+          BUILDER_SOURCE_REF="$builder_source_ref" \
+          bash "$GITHUB_ACTION_PATH/../verify-broker-builder-evidence/verify.sh"
 
         sbom_sha256="sha256:$(sha256sum "$sbom" | awk '{print $1}')"
         signature_sha256="sha256:$(sha256sum "$signature" | awk '{print $1}')"

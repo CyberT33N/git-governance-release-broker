@@ -86,8 +86,13 @@ and Supply-Chain conventions.
 ## Container build
 
 ```powershell
-docker build --tag git-governance-release-broker:dev .
+$env:BUILDER_IMAGE = "<verified-internal-builder-image@sha256:...>"
+docker build --build-arg "BUILDER_IMAGE=$env:BUILDER_IMAGE" --tag git-governance-release-broker:dev .
 ```
+
+The builder argument must be a full immutable internal builder-artifact
+reference. A Docker cache, a public `golang` reference, or a mutable builder
+tag is not a valid substitute for the governed staging consumer.
 
 ## GCP deployment
 
