@@ -1,5 +1,25 @@
 # Traceability
 
+## GOV-64: Materialize the local broker builder image
+
+Status: in implementation.
+
+Scope:
+
+```text
+Materialize the full digest declared by the Dockerfile before isolated Go
+module and test consumption. Verify the local repository-digest and
+linux/amd64 platform binding, then use only a digest-derived local builder
+reference with --pull=never and --network=none. Build the final staging image
+only after that consumer phase succeeds, with --pull=false and --network=none.
+
+The local materialization is an availability and digest-binding control, not a
+verified builder-artifact claim. Builder signature, SBOM, provenance, policy,
+and revocation evidence remain required before an Artifact Subject can become
+verified. Missing or mismatched local builder materialization must fail before
+image publication, evidence upload, or Cloud Run mutation.
+```
+
 ## GOV-63: Conform broker evidence subjects to evidence-graph/v1
 
 Status: in implementation.

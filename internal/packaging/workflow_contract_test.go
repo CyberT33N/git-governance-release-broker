@@ -544,8 +544,13 @@ func TestStagingWorkflowMaterializesEGP1Subjects(t *testing.T) {
 
 	workflow := string(contents)
 	for _, required := range []string{
-		"Materialize isolated dependency and test evidence",
+		"Materialize local builder and isolated dependency evidence",
 		"--network=none",
+		"docker pull --platform=linux/amd64 \"$builder_image\"",
+		"local_builder_image=\"broker-local-builder:${builder_digest#sha256:}\"",
+		"docker tag \"$builder_image\" \"$local_builder_image\"",
+		"docker image inspect \"$local_builder_image\"",
+		"--pull=false --network=none",
 		"dependency-resolution.json",
 		"test-result.json",
 		"cosign download signature \"$IMAGE\"",
@@ -588,18 +593,81 @@ func TestStagingWorkflowMaterializesEGP1Subjects(t *testing.T) {
 		}
 	}
 
-	dependencyIndex := strings.Index(workflow, "- name: Materialize isolated dependency and test evidence")
+	dependencyIndex := strings.Index(workflow, "- name: Materialize local builder and isolated dependency evidence")
 	buildIndex := strings.Index(workflow, "- name: Build immutable staging image")
 	pushIndex := strings.Index(workflow, "- name: Push immutable staging image")
 	sbomIndex := strings.Index(workflow, "- name: Generate staging image SBOM")
 	if dependencyIndex < 0 || buildIndex < 0 || pushIndex < 0 || sbomIndex < 0 ||
-		buildIndex > dependencyIndex || dependencyIndex > pushIndex || pushIndex > sbomIndex {
-		t.Fatal("staging dependency and test evidence is not materialized after the local build but before image publication and the SBOM")
+		dependencyIndex > buildIndex || buildIndex > pushIndex || pushIndex > sbomIndex {
+		t.Fatal("staging builder and dependency evidence is not materialized before the isolated local build and image publication")
 	}
 	deployIndex := strings.Index(workflow, "gcloud run deploy")
 	recordIndex := strings.Index(workflow, "uses: ./.github/actions/record-broker-deployment-evidence")
 	if deployIndex < 0 || recordIndex < 0 || deployIndex > recordIndex {
 		t.Fatal("staging deployment evidence is not recorded after the Cloud Run mutation")
+	}
+}
+
+func TestStagingWorkflowUsesMaterializedLocalBuilderForOfflineConsumer(t *testing.T) {
+	stagingPath := filepath.Join("..", "..", ".github", "workflows", "gcp-broker-staging.yml")
+	contents, err := os.ReadFile(stagingPath)
+	if err != nil {
+		t.Fatalf("ReadFile(%q) error = %v", stagingPath, err)
+	}
+
+	workflow := strings.ReplaceAll(string(contents), "\r\n", "\n")
+	materializationStart := strings.Index(workflow, "- name: Materialize local builder and isolated dependency evidence")
+	buildStart := strings.Index(workflow, "- name: Build immutable staging image")
+	if materializationStart < 0 || buildStart < 0 || materializationStart > buildStart {
+		t.Fatal("staging workflow does not materialize the local builder before the final image build")
+	}
+
+	materialization := workflow[materializationStart:buildStart]
+	pullIndex := strings.Index(materialization, "docker pull --platform=linux/amd64 \"$builder_image\"")
+	tagIndex := strings.Index(materialization, "docker tag \"$builder_image\" \"$local_builder_image\"")
+	firstOfflineRun := strings.Index(materialization, "docker run --rm")
+	if pullIndex < 0 || tagIndex < 0 || firstOfflineRun < 0 || pullIndex > tagIndex || tagIndex > firstOfflineRun {
+		t.Fatal("staging workflow does not materialize and tag the builder before offline consumption")
+	}
+
+	for _, required := range []string{
+		"builder_digest=\"${builder_image##*@}\"",
+		"[[ \"$builder_digest\" =~ ^sha256:[0-9a-f]{64}$ ]]",
+		"local_builder_digests=\"$(docker image inspect \"$local_builder_image\" --format '{{range .RepoDigests}}{{println .}}{{end}}')\"",
+		"awk -F@ -v expected=\"$builder_digest\" '$NF == expected { found = 1 } END { exit !found }'",
+		"test \"$(docker image inspect \"$local_builder_image\" --format '{{.Os}}/{{.Architecture}}')\" = \"linux/amd64\"",
+		"\"$local_builder_image\" list -m -json all",
+		"\"$local_builder_image\" mod verify",
+		"\"$local_builder_image\" test -mod=readonly ./...",
+		"\"$local_builder_image\" env GOVERSION",
+		"--pull=never",
+		"--network=none",
+	} {
+		if !strings.Contains(materialization, required) {
+			t.Fatalf("local builder materialization is missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{
+		"\"$builder_image\" list -m -json all",
+		"\"$builder_image\" mod verify",
+		"\"$builder_image\" test -mod=readonly ./...",
+		"\"$builder_image\" env GOVERSION",
+	} {
+		if strings.Contains(materialization, forbidden) {
+			t.Fatalf("offline consumer retains direct builder reference %q", forbidden)
+		}
+	}
+
+	buildEnd := strings.Index(workflow[buildStart:], "- name: Push immutable staging image")
+	if buildEnd < 0 {
+		t.Fatal("staging workflow is missing image publication after the final image build")
+	}
+	buildStep := workflow[buildStart : buildStart+buildEnd]
+	if !strings.Contains(buildStep, "docker build --platform=linux/amd64 --pull=false --network=none --tag \"$image\" .") {
+		t.Fatal("final staging image build is not explicitly local and network-isolated")
+	}
+	if strings.Contains(buildStep, " --pull ") {
+		t.Fatal("final staging image build retains an implicit builder refresh")
 	}
 }
 

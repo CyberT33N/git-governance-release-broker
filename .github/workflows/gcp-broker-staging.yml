@@ -145,31 +145,26 @@ jobs:
           password: ${{ steps.auth.outputs.access_token }}
           logout: true
 
-      - name: Build immutable staging image
-        id: image-build
-        shell: bash
-        run: |
-          set -euo pipefail
-          gcloud artifacts repositories describe "$ARTIFACT_REPOSITORY" \
-            --location="$GCP_REGION" \
-            --project="$GCP_PROJECT_ID" >/dev/null
-          image="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${ARTIFACT_REPOSITORY}/broker:sha-${GITHUB_SHA}"
-          docker build --platform=linux/amd64 --pull --tag "$image" .
-          echo "tag=${image}" >> "$GITHUB_OUTPUT"
-          echo "repository=${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${ARTIFACT_REPOSITORY}/broker" >> "$GITHUB_OUTPUT"
-
       - name: Prepare staging evidence workspace
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p .build/evidence
 
-      - name: Materialize isolated dependency and test evidence
+      - name: Materialize local builder and isolated dependency evidence
         shell: bash
         run: |
           set -euo pipefail
           builder_image="$(awk '$1 == "FROM" && $2 == "--platform=linux/amd64" && $3 ~ /^golang@sha256:/ { print $3; exit }' Dockerfile)"
           test -n "$builder_image"
+          builder_digest="${builder_image##*@}"
+          [[ "$builder_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+          local_builder_image="broker-local-builder:${builder_digest#sha256:}"
+          docker pull --platform=linux/amd64 "$builder_image"
+          docker tag "$builder_image" "$local_builder_image"
+          local_builder_digests="$(docker image inspect "$local_builder_image" --format '{{range .RepoDigests}}{{println .}}{{end}}')"
+          printf '%s\n' "$local_builder_digests" | awk -F@ -v expected="$builder_digest" '$NF == expected { found = 1 } END { exit !found }'
+          test "$(docker image inspect "$local_builder_image" --format '{{.Os}}/{{.Architecture}}')" = "linux/amd64"
           mount="type=bind,source=${GITHUB_WORKSPACE},target=/src,readonly"
           docker run --rm \
             --pull=never \
@@ -180,7 +175,7 @@ jobs:
             --env GOTOOLCHAIN=local \
             --env GOFLAGS=-mod=readonly \
             --entrypoint go \
-            "$builder_image" list -m -json all | jq -sS . > .build/evidence/dependency-resolution.json
+            "$local_builder_image" list -m -json all | jq -sS . > .build/evidence/dependency-resolution.json
           test -s .build/evidence/dependency-resolution.json
           docker run --rm \
             --pull=never \
@@ -191,7 +186,7 @@ jobs:
             --env GOTOOLCHAIN=local \
             --env GOFLAGS=-mod=readonly \
             --entrypoint go \
-            "$builder_image" mod verify
+            "$local_builder_image" mod verify
           docker run --rm \
             --pull=never \
             --network=none \
@@ -201,8 +196,8 @@ jobs:
             --env GOTOOLCHAIN=local \
             --env GOFLAGS=-mod=readonly \
             --entrypoint go \
-            "$builder_image" test -mod=readonly ./...
-          go_toolchain="$(docker run --rm --pull=never --network=none --entrypoint go "$builder_image" env GOVERSION)"
+            "$local_builder_image" test -mod=readonly ./...
+          go_toolchain="$(docker run --rm --pull=never --network=none --entrypoint go "$local_builder_image" env GOVERSION)"
           test -n "$go_toolchain"
           jq -n \
             --arg source_commit "$GITHUB_SHA" \
@@ -222,6 +217,19 @@ jobs:
               status: "passed",
               issued_at: $issued_at
             }' > .build/evidence/test-result.json
+
+      - name: Build immutable staging image
+        id: image-build
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud artifacts repositories describe "$ARTIFACT_REPOSITORY" \
+            --location="$GCP_REGION" \
+            --project="$GCP_PROJECT_ID" >/dev/null
+          image="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${ARTIFACT_REPOSITORY}/broker:sha-${GITHUB_SHA}"
+          docker build --platform=linux/amd64 --pull=false --network=none --tag "$image" .
+          echo "tag=${image}" >> "$GITHUB_OUTPUT"
+          echo "repository=${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${ARTIFACT_REPOSITORY}/broker" >> "$GITHUB_OUTPUT"
 
       - name: Push immutable staging image
         id: image
