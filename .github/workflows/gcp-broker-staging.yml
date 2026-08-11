@@ -145,8 +145,8 @@ jobs:
           password: ${{ steps.auth.outputs.access_token }}
           logout: true
 
-      - name: Build and push immutable staging image
-        id: image
+      - name: Build immutable staging image
+        id: image-build
         shell: bash
         run: |
           set -euo pipefail
@@ -155,25 +155,95 @@ jobs:
             --project="$GCP_PROJECT_ID" >/dev/null
           image="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${ARTIFACT_REPOSITORY}/broker:sha-${GITHUB_SHA}"
           docker build --platform=linux/amd64 --pull --tag "$image" .
-          docker push "$image"
-          digest="$(gcloud artifacts docker images describe "$image" \
-            --format='value(image_summary.digest)' \
-            --project="$GCP_PROJECT_ID")"
-          [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
-          echo "reference=${image%@*}@${digest}" >> "$GITHUB_OUTPUT"
+          echo "tag=${image}" >> "$GITHUB_OUTPUT"
           echo "repository=${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${ARTIFACT_REPOSITORY}/broker" >> "$GITHUB_OUTPUT"
-          echo "digest=${digest}" >> "$GITHUB_OUTPUT"
-
-      - name: Install Cosign
-        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # cosign-installer v4.1.2
-        with:
-          cosign-release: v3.1.3
 
       - name: Prepare staging evidence workspace
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p .build/evidence
+
+      - name: Materialize isolated dependency and test evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          builder_image="$(awk '$1 == "FROM" && $2 == "--platform=linux/amd64" && $3 ~ /^golang@sha256:/ { print $3; exit }' Dockerfile)"
+          test -n "$builder_image"
+          mount="type=bind,source=${GITHUB_WORKSPACE},target=/src,readonly"
+          docker run --rm \
+            --pull=never \
+            --network=none \
+            --mount "$mount" \
+            --workdir=/src \
+            --env GOPROXY=off \
+            --env GOTOOLCHAIN=local \
+            --env GOFLAGS=-mod=readonly \
+            --entrypoint go \
+            "$builder_image" list -m -json all | jq -sS . > .build/evidence/dependency-resolution.json
+          test -s .build/evidence/dependency-resolution.json
+          docker run --rm \
+            --pull=never \
+            --network=none \
+            --mount "$mount" \
+            --workdir=/src \
+            --env GOPROXY=off \
+            --env GOTOOLCHAIN=local \
+            --env GOFLAGS=-mod=readonly \
+            --entrypoint go \
+            "$builder_image" mod verify
+          docker run --rm \
+            --pull=never \
+            --network=none \
+            --mount "$mount" \
+            --workdir=/src \
+            --env GOPROXY=off \
+            --env GOTOOLCHAIN=local \
+            --env GOFLAGS=-mod=readonly \
+            --entrypoint go \
+            "$builder_image" test -mod=readonly ./...
+          go_toolchain="$(docker run --rm --pull=never --network=none --entrypoint go "$builder_image" env GOVERSION)"
+          test -n "$go_toolchain"
+          jq -n \
+            --arg source_commit "$GITHUB_SHA" \
+            --arg builder_image "$builder_image" \
+            --arg go_toolchain "$go_toolchain" \
+            --arg issued_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            '{
+              schema: "evidence-graph/v1",
+              evidence_type: "test",
+              source_commit: $source_commit,
+              builder_image: $builder_image,
+              go_toolchain: $go_toolchain,
+              commands: [
+                "GOPROXY=off GOTOOLCHAIN=local GOFLAGS=-mod=readonly go mod verify",
+                "GOPROXY=off GOTOOLCHAIN=local GOFLAGS=-mod=readonly go test -mod=readonly ./..."
+              ],
+              status: "passed",
+              issued_at: $issued_at
+            }' > .build/evidence/test-result.json
+
+      - name: Push immutable staging image
+        id: image
+        shell: bash
+        env:
+          IMAGE_TAG: ${{ steps.image-build.outputs.tag }}
+          IMAGE_REPOSITORY: ${{ steps.image-build.outputs.repository }}
+        run: |
+          set -euo pipefail
+          docker push "$IMAGE_TAG"
+          digest="$(gcloud artifacts docker images describe "$IMAGE_TAG" \
+            --format='value(image_summary.digest)' \
+            --project="$GCP_PROJECT_ID")"
+          [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+          echo "reference=${IMAGE_REPOSITORY}@${digest}" >> "$GITHUB_OUTPUT"
+          echo "repository=${IMAGE_REPOSITORY}" >> "$GITHUB_OUTPUT"
+          echo "digest=${digest}" >> "$GITHUB_OUTPUT"
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # cosign-installer v4.1.2
+        with:
+          cosign-release: v3.1.3
 
       - name: Generate staging image SBOM
         uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
@@ -216,7 +286,8 @@ jobs:
           push-to-registry: true
           create-storage-record: true
 
-      - name: Store immutable staging evidence
+      - id: evidence
+        name: Prepare immutable staging evidence graph
         shell: bash
         env:
           IMAGE: ${{ steps.image.outputs.reference }}
@@ -228,20 +299,30 @@ jobs:
           package_directory=".build/evidence/package"
           mkdir -p "$package_directory"
           cp .build/evidence/broker.spdx.json "$package_directory/broker.spdx.json"
+          cp .build/evidence/dependency-resolution.json "$package_directory/dependency-resolution.json"
+          cp .build/evidence/test-result.json "$package_directory/test-result.json"
           cp "$PROVENANCE_BUNDLE" "$package_directory/provenance.intoto.jsonl"
           cp "$SBOM_BUNDLE" "$package_directory/sbom.intoto.jsonl"
           cosign download signature "$IMAGE" > "$package_directory/signature.json"
           test -s "$package_directory/signature.json"
-          sbom_sha256="$(sha256sum "$package_directory/broker.spdx.json" | awk '{print $1}')"
-          signature_sha256="$(sha256sum "$package_directory/signature.json" | awk '{print $1}')"
-          provenance_bundle_sha256="$(sha256sum "$package_directory/provenance.intoto.jsonl" | awk '{print $1}')"
-          sbom_bundle_sha256="$(sha256sum "$package_directory/sbom.intoto.jsonl" | awk '{print $1}')"
+
+          issued_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          source_repository="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY"
+          source_ref="refs/heads/develop"
+          issuer="https://github.com/${GITHUB_REPOSITORY}/.github/workflows/gcp-broker-staging.yml@${source_ref}"
+          evidence_version="${DIGEST#sha256:}"
           source_tree="$(git rev-parse "${GITHUB_SHA}^{tree}")"
           go_mod_sha256="$(sha256sum go.mod | awk '{print $1}')"
           go_sum_sha256=""
           if test -f go.sum; then
             go_sum_sha256="$(sha256sum go.sum | awk '{print $1}')"
           fi
+          dependency_resolution_sha256="$(sha256sum "$package_directory/dependency-resolution.json" | awk '{print $1}')"
+          test_result_sha256="$(sha256sum "$package_directory/test-result.json" | awk '{print $1}')"
+          sbom_sha256="$(sha256sum "$package_directory/broker.spdx.json" | awk '{print $1}')"
+          signature_sha256="$(sha256sum "$package_directory/signature.json" | awk '{print $1}')"
+          provenance_bundle_sha256="$(sha256sum "$package_directory/provenance.intoto.jsonl" | awk '{print $1}')"
+          sbom_bundle_sha256="$(sha256sum "$package_directory/sbom.intoto.jsonl" | awk '{print $1}')"
           dockerfile_sha256="$(sha256sum Dockerfile | awk '{print $1}')"
           go_directive="$(awk '$1 == "go" { print $2; exit }' go.mod)"
           go_toolchain="$(awk '$1 == "toolchain" { print $2; exit }' go.mod)"
@@ -249,131 +330,412 @@ jobs:
           test -n "$go_directive"
           test -n "$go_toolchain"
           test -n "$builder_image"
+
+          source_subject_id="source:git-commit:${GITHUB_SHA}"
+          dependency_subject_id="dependency-resolution:sha256:${dependency_resolution_sha256}"
+          build_subject_id="build:broker:${GITHUB_SHA}:${dockerfile_sha256}"
+          artifact_subject_id="artifact:oci-image:${DIGEST}"
+
           jq -n \
-            --arg repository "$GITHUB_REPOSITORY" \
-            --arg source_repository "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" \
+            --arg issuer "$issuer" \
+            --arg issued_at "$issued_at" \
+            --arg source_repository "$source_repository" \
             --arg source_commit "$GITHUB_SHA" \
             --arg source_tree "$source_tree" \
-            --arg source_ref "refs/heads/develop" \
-            --arg source_image "$IMAGE" \
-            --arg image_digest "$DIGEST" \
-            --arg go_mod_sha256 "$go_mod_sha256" \
+            --arg source_ref "$source_ref" \
+            --arg source_subject_id "$source_subject_id" \
+            --arg dependency_subject_id "$dependency_subject_id" \
+            '{
+              schema: "evidence-graph/v1",
+              document: {
+                id: ("document:" + $source_subject_id),
+                type: "subject",
+                issuer: $issuer,
+                created_at: $issued_at
+              },
+              subject: {
+                id: $source_subject_id,
+                type: "source",
+                primary_digest: ("git-sha1:" + $source_commit)
+              },
+              relations: [
+                {
+                  relation_type: "resolves",
+                  source_subject_id: $source_subject_id,
+                  target_subject_id: $dependency_subject_id
+                }
+              ],
+              evidence: [],
+              policy: {
+                bundle_id: "not-recorded",
+                decision: "pending",
+                exception: null,
+                approval: {
+                  status: "not-recorded"
+                }
+              },
+              lifecycle: {
+                status: "pending",
+                target_lane: "staging",
+                phase_references: {
+                  authorized_scope: "broker-staging-build"
+                }
+              },
+              source: {
+                repository: $source_repository,
+                commit: $source_commit,
+                tree: $source_tree,
+                protected_ref: $source_ref
+              }
+            }' > "$package_directory/source.subject.payload.json"
+
+          jq -n \
+            --arg issuer "$issuer" \
+            --arg issued_at "$issued_at" \
+            --arg source_subject_id "$source_subject_id" \
+            --arg dependency_subject_id "$dependency_subject_id" \
+            --arg build_subject_id "$build_subject_id" \
+            --arg go_mod_sha256 "sha256:${go_mod_sha256}" \
             --arg go_sum_sha256 "$go_sum_sha256" \
-            --arg dockerfile_sha256 "$dockerfile_sha256" \
+            --arg dependency_resolution_sha256 "sha256:${dependency_resolution_sha256}" \
+            --arg evidence_repository "$EVIDENCE_ARTIFACT_REPOSITORY" \
+            --arg evidence_version "$evidence_version" \
+            '{
+              schema: "evidence-graph/v1",
+              document: {
+                id: ("document:" + $dependency_subject_id),
+                type: "subject",
+                issuer: $issuer,
+                created_at: $issued_at
+              },
+              subject: {
+                id: $dependency_subject_id,
+                type: "dependency-resolution",
+                primary_digest: $dependency_resolution_sha256
+              },
+              relations: [
+                {
+                  relation_type: "resolves",
+                  source_subject_id: $source_subject_id,
+                  target_subject_id: $dependency_subject_id
+                },
+                {
+                  relation_type: "built-from",
+                  source_subject_id: $dependency_subject_id,
+                  target_subject_id: $build_subject_id
+                }
+              ],
+              evidence: [],
+              policy: {
+                bundle_id: "not-recorded",
+                decision: "pending",
+                exception: null,
+                approval: {
+                  status: "not-recorded"
+                }
+              },
+              lifecycle: {
+                status: "pending",
+                target_lane: "staging"
+              },
+              dependency_resolution: {
+                go_mod: {
+                  path: "go.mod",
+                  digest: $go_mod_sha256
+                },
+                go_sum: (
+                  if $go_sum_sha256 == "" then
+                    null
+                  else
+                    {
+                      path: "go.sum",
+                      digest: ("sha256:" + $go_sum_sha256)
+                    }
+                  end
+                ),
+                module_graph: {
+                  immutable_reference: {
+                    repository: $evidence_repository,
+                    package: "broker-evidence",
+                    version: $evidence_version,
+                    file: "dependency-resolution.json"
+                  },
+                  digest: $dependency_resolution_sha256
+                },
+                admission: {
+                  status: "not-recorded",
+                  exceptions: []
+                }
+              }
+            }' > "$package_directory/dependency-resolution.subject.payload.json"
+
+          jq -n \
+            --arg issuer "$issuer" \
+            --arg issued_at "$issued_at" \
+            --arg source_subject_id "$source_subject_id" \
+            --arg dependency_subject_id "$dependency_subject_id" \
+            --arg build_subject_id "$build_subject_id" \
+            --arg artifact_subject_id "$artifact_subject_id" \
+            --arg dockerfile_sha256 "sha256:${dockerfile_sha256}" \
+            --arg builder_image "$builder_image" \
             --arg go_directive "$go_directive" \
             --arg go_toolchain "$go_toolchain" \
-            --arg builder_image "$builder_image" \
-            --arg workflow ".github/workflows/gcp-broker-staging.yml" \
-            --arg workflow_run_id "$GITHUB_RUN_ID" \
-            --arg workflow_run_attempt "$GITHUB_RUN_ATTEMPT" \
-            --arg sbom_sha256 "$sbom_sha256" \
-            --arg signature_sha256 "$signature_sha256" \
-            --arg provenance_bundle_sha256 "$provenance_bundle_sha256" \
-            --arg sbom_bundle_sha256 "$sbom_bundle_sha256" \
-            --arg signer_workflow ".github/workflows/gcp-broker-staging.yml" \
-            --arg certificate_identity "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/gcp-broker-staging.yml@refs/heads/develop" \
-            --arg certificate_oidc_issuer "https://token.actions.githubusercontent.com" \
+            --arg evidence_repository "$EVIDENCE_ARTIFACT_REPOSITORY" \
+            --arg evidence_version "$evidence_version" \
+            --arg test_result_sha256 "sha256:${test_result_sha256}" \
             '{
-              schema_version: 2,
+              schema: "evidence-graph/v1",
+              document: {
+                id: ("document:" + $build_subject_id),
+                type: "subject",
+                issuer: $issuer,
+                created_at: $issued_at
+              },
               subject: {
-                type: "artifact",
-                id: ("oci-image:" + $image_digest),
-                digest: $image_digest
+                id: $build_subject_id,
+                type: "build",
+                primary_digest: $dockerfile_sha256
               },
-              subjects: {
-                source: {
-                  type: "source",
-                  id: ("git-commit:" + $source_commit),
-                  repository: $source_repository,
-                  commit: $source_commit,
-                  tree: $source_tree,
-                  ref: $source_ref
+              relations: [
+                {
+                  relation_type: "built-from",
+                  source_subject_id: $source_subject_id,
+                  target_subject_id: $build_subject_id
                 },
-                dependency_resolution: {
-                  type: "dependency-resolution",
-                  id: ("go-module-input:" + $go_mod_sha256),
-                  go_mod: {
-                    path: "go.mod",
-                    sha256: $go_mod_sha256
+                {
+                  relation_type: "built-from",
+                  source_subject_id: $dependency_subject_id,
+                  target_subject_id: $build_subject_id
+                },
+                {
+                  relation_type: "produces",
+                  source_subject_id: $build_subject_id,
+                  target_subject_id: $artifact_subject_id
+                }
+              ],
+              evidence: [
+                {
+                  evidence_type: "test",
+                  subject_id: $build_subject_id,
+                  immutable_reference: {
+                    repository: $evidence_repository,
+                    package: "broker-evidence",
+                    version: $evidence_version,
+                    file: "test-result.json"
                   },
-                  go_sum: (
-                    if $go_sum_sha256 == "" then
-                      null
-                    else
-                      {
-                        path: "go.sum",
-                        sha256: $go_sum_sha256
-                      }
-                    end
-                  ),
-                  admission_status: "external-prerequisite-unverified"
-                },
-                build: {
-                  type: "build",
-                  id: ("broker-build:" + $source_commit),
-                  workflow: $workflow,
-                  workflow_run_id: $workflow_run_id,
-                  workflow_run_attempt: $workflow_run_attempt,
-                  dockerfile_sha256: $dockerfile_sha256,
-                  builder_image: $builder_image,
-                  go_directive: $go_directive,
-                  go_toolchain: $go_toolchain
-                },
-                artifact: {
-                  type: "artifact",
-                  id: ("oci-image:" + $image_digest),
-                  reference: $source_image,
-                  digest: $image_digest
-                },
-                promotion: {
-                  type: "promotion",
-                  status: "not-recorded"
-                },
-                deployment: {
-                  type: "deployment",
-                  status: "not-recorded"
-                },
-                operation: {
-                  type: "operation",
-                  status: "not-evaluated"
+                  digest: $test_result_sha256,
+                  issuer: $issuer,
+                  issued_at: $issued_at
                 }
-              },
-              evidence: {
-                sbom: {
-                  path: "broker.spdx.json",
-                  sha256: $sbom_sha256
-                },
-                signature: {
-                  path: "signature.json",
-                  sha256: $signature_sha256,
-                  certificate_identity: $certificate_identity,
-                  certificate_oidc_issuer: $certificate_oidc_issuer
-                },
-                provenance: {
-                  path: "provenance.intoto.jsonl",
-                  sha256: $provenance_bundle_sha256
-                },
-                sbom_attestation: {
-                  path: "sbom.intoto.jsonl",
-                  sha256: $sbom_bundle_sha256
-                }
-              },
+              ],
               policy: {
-                quality_status: "not-attested",
-                approval_status: "environment-gated",
-                revocation_status: "not-evaluated",
-                retention_status: "not-classified"
+                bundle_id: "not-recorded",
+                decision: "pending",
+                exception: null,
+                approval: {
+                  status: "not-recorded"
+                }
               },
-              signer_workflow: $signer_workflow,
-              source_ref: $source_ref
-            }' > "$package_directory/manifest.json"
+              lifecycle: {
+                status: "pending",
+                target_lane: "staging"
+              },
+              build: {
+                definition: {
+                  path: "Dockerfile",
+                  digest: $dockerfile_sha256
+                },
+                builder: {
+                  image: $builder_image,
+                  runner_identity: "github-hosted:ubuntu-24.04"
+                },
+                toolchain: {
+                  go_directive: $go_directive,
+                  go_toolchain: $go_toolchain,
+                  goos: "linux",
+                  goarch: "amd64",
+                  cgo_enabled: false
+                }
+              }
+            }' > "$package_directory/build.subject.payload.json"
+
+          jq -n \
+            --arg issuer "$issuer" \
+            --arg issued_at "$issued_at" \
+            --arg build_subject_id "$build_subject_id" \
+            --arg artifact_subject_id "$artifact_subject_id" \
+            --arg source_image "$IMAGE" \
+            --arg image_digest "$DIGEST" \
+            --arg artifact_repository "$ARTIFACT_REPOSITORY" \
+            --arg evidence_repository "$EVIDENCE_ARTIFACT_REPOSITORY" \
+            --arg evidence_version "$evidence_version" \
+            --arg sbom_sha256 "sha256:${sbom_sha256}" \
+            --arg signature_sha256 "sha256:${signature_sha256}" \
+            --arg provenance_bundle_sha256 "sha256:${provenance_bundle_sha256}" \
+            --arg sbom_bundle_sha256 "sha256:${sbom_bundle_sha256}" \
+            --arg certificate_identity "$issuer" \
+            '{
+              schema: "evidence-graph/v1",
+              document: {
+                id: ("document:" + $artifact_subject_id),
+                type: "subject",
+                issuer: $issuer,
+                created_at: $issued_at
+              },
+              subject: {
+                id: $artifact_subject_id,
+                type: "artifact",
+                primary_digest: $image_digest
+              },
+              relations: [
+                {
+                  relation_type: "produces",
+                  source_subject_id: $build_subject_id,
+                  target_subject_id: $artifact_subject_id
+                }
+              ],
+              evidence: [
+                {
+                  evidence_type: "sbom",
+                  subject_id: $artifact_subject_id,
+                  immutable_reference: {
+                    repository: $evidence_repository,
+                    package: "broker-evidence",
+                    version: $evidence_version,
+                    file: "broker.spdx.json"
+                  },
+                  digest: $sbom_sha256,
+                  issuer: $issuer,
+                  issued_at: $issued_at
+                },
+                {
+                  evidence_type: "signature",
+                  subject_id: $artifact_subject_id,
+                  immutable_reference: {
+                    repository: $evidence_repository,
+                    package: "broker-evidence",
+                    version: $evidence_version,
+                    file: "signature.json"
+                  },
+                  digest: $signature_sha256,
+                  issuer: $certificate_identity,
+                  issued_at: $issued_at
+                },
+                {
+                  evidence_type: "provenance",
+                  subject_id: $artifact_subject_id,
+                  immutable_reference: {
+                    repository: $evidence_repository,
+                    package: "broker-evidence",
+                    version: $evidence_version,
+                    file: "provenance.intoto.jsonl"
+                  },
+                  digest: $provenance_bundle_sha256,
+                  issuer: $issuer,
+                  issued_at: $issued_at
+                },
+                {
+                  evidence_type: "attestation",
+                  subject_id: $artifact_subject_id,
+                  immutable_reference: {
+                    repository: $evidence_repository,
+                    package: "broker-evidence",
+                    version: $evidence_version,
+                    file: "sbom.intoto.jsonl"
+                  },
+                  digest: $sbom_bundle_sha256,
+                  issuer: $issuer,
+                  issued_at: $issued_at
+                }
+              ],
+              policy: {
+                bundle_id: "not-recorded",
+                decision: "pending",
+                exception: null,
+                approval: {
+                  status: "not-recorded"
+                }
+              },
+              lifecycle: {
+                status: "pending",
+                target_lane: "staging",
+                phase_status_at_issuance: {
+                  promotion: "not-recorded",
+                  deployment: "not-recorded",
+                  operation: "not-recorded"
+                }
+              },
+              artifact: {
+                format: "oci",
+                repository: $artifact_repository,
+                reference: $source_image,
+                digest: $image_digest
+              }
+            }' > "$package_directory/artifact.subject.payload.json"
+
+          for subject_type in promotion operation; do
+            jq -n \
+              --arg issuer "$issuer" \
+              --arg issued_at "$issued_at" \
+              --arg subject_type "$subject_type" \
+              --arg image_digest "$DIGEST" \
+              '{
+                schema: "evidence-graph/v1",
+                document: {
+                  id: ("document:" + $subject_type + ":not-recorded:" + $image_digest),
+                  type: "subject",
+                  issuer: $issuer,
+                  created_at: $issued_at
+                },
+                subject: {
+                  id: ($subject_type + ":not-recorded:" + $image_digest),
+                  type: $subject_type,
+                  primary_digest: $image_digest
+                },
+                relations: [],
+                evidence: [],
+                policy: {
+                  bundle_id: "not-recorded",
+                  decision: "not-recorded",
+                  exception: null,
+                  approval: {
+                    status: "not-recorded"
+                  }
+                },
+                lifecycle: {
+                  status: "not-recorded",
+                  target_lane: "not-recorded"
+                }
+              }' > "$package_directory/${subject_type}.not-recorded.subject.payload.json"
+          done
+
+          echo "directory=$package_directory" >> "$GITHUB_OUTPUT"
+          echo "issuer=$issuer" >> "$GITHUB_OUTPUT"
+          echo "version=$evidence_version" >> "$GITHUB_OUTPUT"
+
+      - name: Seal immutable staging evidence subjects
+        uses: ./.github/actions/seal-evidence-subject
+        with:
+          directory: ${{ steps.evidence.outputs.directory }}
+          issuer: ${{ steps.evidence.outputs.issuer }}
+          evidence-repository: ${{ env.EVIDENCE_ARTIFACT_REPOSITORY }}
+          evidence-package: broker-evidence
+          evidence-version: ${{ steps.evidence.outputs.version }}
+
+      - name: Store immutable staging evidence graph
+        shell: bash
+        env:
+          DIRECTORY: ${{ steps.evidence.outputs.directory }}
+          EVIDENCE_VERSION: ${{ steps.evidence.outputs.version }}
+        run: |
+          set -euo pipefail
           gcloud artifacts generic upload \
             --project="$GCP_PROJECT_ID" \
             --location="$GCP_REGION" \
             --repository="$EVIDENCE_ARTIFACT_REPOSITORY" \
             --package=broker-evidence \
-            --version="${DIGEST#sha256:}" \
-            --source-directory="$package_directory" \
+            --version="$EVIDENCE_VERSION" \
+            --source-directory="$DIRECTORY" \
             --skip-existing
 
       - name: Deploy private staging broker
@@ -409,3 +771,16 @@ jobs:
             --member="serviceAccount:${INVOKER_SERVICE_ACCOUNT}" \
             --role="roles/run.invoker" \
             --quiet
+
+      - name: Record immutable staging deployment subject
+        uses: ./.github/actions/record-broker-deployment-evidence
+        with:
+          image: ${{ steps.image.outputs.reference }}
+          project-id: ${{ env.GCP_PROJECT_ID }}
+          region: ${{ env.GCP_REGION }}
+          evidence-repository: ${{ env.EVIDENCE_ARTIFACT_REPOSITORY }}
+          service: ${{ env.BROKER_SERVICE }}
+          lane: staging
+          workflow: .github/workflows/gcp-broker-staging.yml
+          source-ref: refs/heads/develop
+          environment: gcp-broker-staging

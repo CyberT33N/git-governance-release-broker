@@ -58,9 +58,9 @@ func TestWorkflowContracts(t *testing.T) {
 				"--bundle-from-oci",
 				"--deny-self-hosted-runners",
 				"--source-digest",
-				".evidence.provenance.sha256",
-				".evidence.sbom_attestation.sha256",
-				".evidence.signature.sha256",
+				"evidence_type == \"provenance\"",
+				"evidence_type == \"attestation\"",
+				"evidence_type == \"signature\"",
 				"require-promotion:",
 				"gcloud auth print-access-token",
 				"docker login \"$registry\" --username oauth2accesstoken --password-stdin",
@@ -104,11 +104,12 @@ func TestWorkflowContracts(t *testing.T) {
 				"attestations: read",
 				"git merge-base --is-ancestor \"$SOURCE_COMMIT\" HEAD",
 				"./.github/actions/verify-broker-evidence",
-				"gcloud artifacts generic upload",
+				"./.github/actions/record-broker-promotion-evidence",
 			},
 			forbidden: []string{
 				"docker build",
 				"gcloud run deploy",
+				"latest",
 				"latest",
 			},
 		},
@@ -146,7 +147,7 @@ func TestWorkflowContracts(t *testing.T) {
 				"docker tag \"$SOURCE_IMAGE\" \"$target_tag\"",
 				"docker push \"$target_tag\"",
 				"test \"$target_digest\" = \"$SOURCE_DIGEST\"",
-				"gcloud artifacts generic upload",
+				"./.github/actions/record-broker-promotion-evidence",
 			},
 			forbidden: []string{
 				"docker build",
@@ -188,12 +189,11 @@ func TestWorkflowContracts(t *testing.T) {
 				"docker tag \"$SOURCE_IMAGE\" \"$target_tag\"",
 				"docker push \"$target_tag\"",
 				"test \"$target_digest\" = \"$SOURCE_DIGEST\"",
-				"gcloud artifacts generic upload",
+				"./.github/actions/record-broker-promotion-evidence",
 			},
 			forbidden: []string{
 				"docker build",
 				"gcloud run deploy",
-				"latest",
 			},
 		},
 		{
@@ -223,7 +223,7 @@ func TestWorkflowContracts(t *testing.T) {
 				"attestations: read",
 				"git merge-base --is-ancestor \"$SOURCE_COMMIT\" HEAD",
 				"./.github/actions/verify-broker-evidence",
-				"gcloud artifacts generic upload",
+				"./.github/actions/record-broker-promotion-evidence",
 			},
 			forbidden: []string{
 				"docker build",
@@ -263,7 +263,7 @@ func TestWorkflowContracts(t *testing.T) {
 				"docker tag \"$SOURCE_IMAGE\" \"$target_tag\"",
 				"docker push \"$target_tag\"",
 				"test \"$target_digest\" = \"$SOURCE_DIGEST\"",
-				"gcloud artifacts generic upload",
+				"./.github/actions/record-broker-promotion-evidence",
 			},
 			forbidden: []string{
 				"docker build",
@@ -459,7 +459,7 @@ func TestAttestationRegistryAuthUsesShortLivedStaticDockerCredentials(t *testing
 	if loginIndex < 0 {
 		t.Fatal("deploy job is missing static Docker registry authentication")
 	}
-	buildIndex := strings.Index(deployJob, "- name: Build and push immutable staging image")
+	buildIndex := strings.Index(deployJob, "- name: Build immutable staging image")
 	if buildIndex < 0 {
 		t.Fatal("deploy job is missing the image build step")
 	}
@@ -535,7 +535,7 @@ func TestEvidenceVerifierCallersCreateGoogleCredentialsFiles(t *testing.T) {
 	}
 }
 
-func TestStagingEvidenceManifestModelsSubjectGraph(t *testing.T) {
+func TestStagingWorkflowMaterializesEGP1Subjects(t *testing.T) {
 	stagingPath := filepath.Join("..", "..", ".github", "workflows", "gcp-broker-staging.yml")
 	contents, err := os.ReadFile(stagingPath)
 	if err != nil {
@@ -544,32 +544,66 @@ func TestStagingEvidenceManifestModelsSubjectGraph(t *testing.T) {
 
 	workflow := string(contents)
 	for _, required := range []string{
+		"Materialize isolated dependency and test evidence",
+		"--network=none",
+		"dependency-resolution.json",
+		"test-result.json",
 		"cosign download signature \"$IMAGE\"",
 		"signature.json",
-		"signature_sha256",
+		"evidence-graph/v1",
+		"source.subject.payload.json",
+		"dependency-resolution.subject.payload.json",
+		"build.subject.payload.json",
+		"artifact.subject.payload.json",
+		"for subject_type in promotion operation",
+		"${subject_type}.not-recorded.subject.payload.json",
+		"Seal immutable staging evidence subjects",
+		"./.github/actions/seal-evidence-subject",
+		"Record immutable staging deployment subject",
+		"./.github/actions/record-broker-deployment-evidence",
+		"lane: staging",
+		"workflow: .github/workflows/gcp-broker-staging.yml",
+		"source-ref: refs/heads/develop",
+		"environment: gcp-broker-staging",
 		"source_tree=\"$(git rev-parse \"${GITHUB_SHA}^{tree}\")\"",
 		"go_mod_sha256",
 		"dockerfile_sha256",
 		"go_toolchain",
-		"schema_version: 2",
 		"dependency_resolution:",
-		"admission_status: \"external-prerequisite-unverified\"",
-		"workflow_run_id:",
-		"workflow_run_attempt:",
-		"promotion:",
-		"deployment:",
-		"operation:",
-		"quality_status: \"not-attested\"",
-		"certificate_identity:",
-		"certificate_oidc_issuer:",
+		"admission: {",
+		"phase_status_at_issuance:",
 	} {
 		if !strings.Contains(workflow, required) {
-			t.Fatalf("staging evidence manifest is missing %q", required)
+			t.Fatalf("staging EGP-1 workflow is missing %q", required)
 		}
+	}
+	for _, forbidden := range []string{
+		"schema_version: 2",
+		"manifest.json",
+		"external-prerequisite-unverified",
+		"not-evaluated",
+	} {
+		if strings.Contains(workflow, forbidden) {
+			t.Fatalf("staging EGP-1 workflow retains obsolete %q", forbidden)
+		}
+	}
+
+	dependencyIndex := strings.Index(workflow, "- name: Materialize isolated dependency and test evidence")
+	buildIndex := strings.Index(workflow, "- name: Build immutable staging image")
+	pushIndex := strings.Index(workflow, "- name: Push immutable staging image")
+	sbomIndex := strings.Index(workflow, "- name: Generate staging image SBOM")
+	if dependencyIndex < 0 || buildIndex < 0 || pushIndex < 0 || sbomIndex < 0 ||
+		buildIndex > dependencyIndex || dependencyIndex > pushIndex || pushIndex > sbomIndex {
+		t.Fatal("staging dependency and test evidence is not materialized after the local build but before image publication and the SBOM")
+	}
+	deployIndex := strings.Index(workflow, "gcloud run deploy")
+	recordIndex := strings.Index(workflow, "uses: ./.github/actions/record-broker-deployment-evidence")
+	if deployIndex < 0 || recordIndex < 0 || deployIndex > recordIndex {
+		t.Fatal("staging deployment evidence is not recorded after the Cloud Run mutation")
 	}
 }
 
-func TestEvidenceVerifierRequiresCompleteGraphAndPromotionSubject(t *testing.T) {
+func TestEvidenceVerifierRequiresEGP1SubjectsAndVerifiedPromotion(t *testing.T) {
 	verifierPath := filepath.Join("..", "..", ".github", "actions", "verify-broker-evidence", "action.yml")
 	contents, err := os.ReadFile(verifierPath)
 	if err != nil {
@@ -582,23 +616,35 @@ func TestEvidenceVerifierRequiresCompleteGraphAndPromotionSubject(t *testing.T) 
 		"promotion-lane:",
 		"promotion-workflow:",
 		"require-promotion must be true or false",
-		"signature=\"$evidence_directory/signature.json\"",
-		".schema_version == 2",
-		".subjects.source",
-		".subjects.dependency_resolution",
-		".subjects.build",
-		".subjects.artifact",
-		".subjects.promotion",
-		".subjects.deployment",
-		".subjects.operation",
-		".evidence.signature.sha256",
-		"promotion=\"$evidence_directory/promotion.json\"",
-		".source.manifest_sha256",
-		".target.lane",
-		".authority.promoter_service_account",
+		"verify_subject()",
+		"source.subject.json",
+		"dependency-resolution.subject.json",
+		"build.subject.json",
+		"artifact.subject.json",
+		"promotion.subject.json",
+		"promotion-approval.json",
+		"evidence-graph/v1",
+		"canonical_payload_digest",
+		"utf8-json-sorted-keys-v1",
+		"cosign verify-blob",
+		".dependency_resolution.admission.status == \"verified\"",
+		".lifecycle.status == \"verified\"",
+		".lifecycle.phase_references.source_artifact_canonical_payload_digest",
+		"promotion_certificate_identity",
+		"@refs/heads/main",
 	} {
 		if !strings.Contains(verifier, required) {
 			t.Fatalf("evidence verifier is missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{
+		"schema_version == 2",
+		"manifest.json",
+		".subjects.",
+		"promotion.json",
+	} {
+		if strings.Contains(verifier, forbidden) {
+			t.Fatalf("evidence verifier retains obsolete %q", forbidden)
 		}
 	}
 }
@@ -606,34 +652,46 @@ func TestEvidenceVerifierRequiresCompleteGraphAndPromotionSubject(t *testing.T) 
 func TestProductionDeploymentsRequireLaneBoundPromotionEvidence(t *testing.T) {
 	root := filepath.Join("..", "..")
 	for _, testCase := range []struct {
-		path              string
-		lane              string
-		promotionWorkflow string
+		path               string
+		lane               string
+		promotionWorkflow  string
+		deploymentWorkflow string
+		environment        string
 	}{
 		{
-			path:              filepath.Join(".github", "workflows", "gcp-broker-production.yml"),
-			lane:              "release-automation",
-			promotionWorkflow: ".github/workflows/gcp-broker-production-promotion.yml",
+			path:               filepath.Join(".github", "workflows", "gcp-broker-production.yml"),
+			lane:               "release-automation",
+			promotionWorkflow:  ".github/workflows/gcp-broker-production-promotion.yml",
+			deploymentWorkflow: ".github/workflows/gcp-broker-production.yml",
+			environment:        "gcp-broker-production",
 		},
 		{
-			path:              filepath.Join(".github", "workflows", "gcp-reconciliation-publisher-production.yml"),
-			lane:              "reconciliation-publisher",
-			promotionWorkflow: ".github/workflows/gcp-reconciliation-publisher-promotion.yml",
+			path:               filepath.Join(".github", "workflows", "gcp-reconciliation-publisher-production.yml"),
+			lane:               "reconciliation-publisher",
+			promotionWorkflow:  ".github/workflows/gcp-reconciliation-publisher-promotion.yml",
+			deploymentWorkflow: ".github/workflows/gcp-reconciliation-publisher-production.yml",
+			environment:        "gcp-reconciliation-publisher-deployment",
 		},
 		{
-			path:              filepath.Join(".github", "workflows", "gcp-release-credential-verification-production.yml"),
-			lane:              "release-credential-verification",
-			promotionWorkflow: ".github/workflows/gcp-release-credential-verification-promotion.yml",
+			path:               filepath.Join(".github", "workflows", "gcp-release-credential-verification-production.yml"),
+			lane:               "release-credential-verification",
+			promotionWorkflow:  ".github/workflows/gcp-release-credential-verification-promotion.yml",
+			deploymentWorkflow: ".github/workflows/gcp-release-credential-verification-production.yml",
+			environment:        "gcp-release-credential-verification-deployment",
 		},
 		{
-			path:              filepath.Join(".github", "workflows", "gcp-hotfix-delivery-production.yml"),
-			lane:              "hotfix-delivery",
-			promotionWorkflow: ".github/workflows/gcp-hotfix-delivery-promotion.yml",
+			path:               filepath.Join(".github", "workflows", "gcp-hotfix-delivery-production.yml"),
+			lane:               "hotfix-delivery",
+			promotionWorkflow:  ".github/workflows/gcp-hotfix-delivery-promotion.yml",
+			deploymentWorkflow: ".github/workflows/gcp-hotfix-delivery-production.yml",
+			environment:        "gcp-hotfix-delivery-deployment",
 		},
 		{
-			path:              filepath.Join(".github", "workflows", "gcp-hotfix-propagation-publisher-production.yml"),
-			lane:              "hotfix-propagation-publisher",
-			promotionWorkflow: ".github/workflows/gcp-hotfix-propagation-publisher-promotion.yml",
+			path:               filepath.Join(".github", "workflows", "gcp-hotfix-propagation-publisher-production.yml"),
+			lane:               "hotfix-propagation-publisher",
+			promotionWorkflow:  ".github/workflows/gcp-hotfix-propagation-publisher-promotion.yml",
+			deploymentWorkflow: ".github/workflows/gcp-hotfix-propagation-publisher-production.yml",
+			environment:        "gcp-hotfix-propagation-publisher-deployment",
 		},
 	} {
 		t.Run(testCase.lane, func(t *testing.T) {
@@ -648,46 +706,62 @@ func TestProductionDeploymentsRequireLaneBoundPromotionEvidence(t *testing.T) {
 				"require-promotion: true",
 				"promotion-lane: " + testCase.lane,
 				"promotion-workflow: " + testCase.promotionWorkflow,
+				"uses: ./.github/actions/record-broker-deployment-evidence",
+				"lane: " + testCase.lane,
+				"workflow: " + testCase.deploymentWorkflow,
+				"source-ref: refs/heads/main",
+				"environment: " + testCase.environment,
 			} {
 				if !strings.Contains(workflow, required) {
 					t.Fatalf("production workflow is missing %q", required)
 				}
 			}
+			deployIndex := strings.Index(workflow, "gcloud run deploy")
+			recordIndex := strings.Index(workflow, "uses: ./.github/actions/record-broker-deployment-evidence")
+			if deployIndex < 0 || recordIndex < 0 || deployIndex > recordIndex {
+				t.Fatal("production deployment evidence is not recorded after the Cloud Run mutation")
+			}
 		})
 	}
 }
 
-func TestPromotionWorkflowsWriteLaneBoundPromotionSubjects(t *testing.T) {
+func TestPromotionWorkflowsRecordLaneBoundEGP1Subjects(t *testing.T) {
 	root := filepath.Join("..", "..")
 	for _, testCase := range []struct {
 		path              string
 		lane              string
 		promotionWorkflow string
+		environment       string
 	}{
 		{
 			path:              filepath.Join(".github", "workflows", "gcp-broker-production-promotion.yml"),
 			lane:              "release-automation",
 			promotionWorkflow: ".github/workflows/gcp-broker-production-promotion.yml",
+			environment:       "gcp-broker-production",
 		},
 		{
 			path:              filepath.Join(".github", "workflows", "gcp-reconciliation-publisher-promotion.yml"),
 			lane:              "reconciliation-publisher",
 			promotionWorkflow: ".github/workflows/gcp-reconciliation-publisher-promotion.yml",
+			environment:       "gcp-reconciliation-publisher-deployment",
 		},
 		{
 			path:              filepath.Join(".github", "workflows", "gcp-release-credential-verification-promotion.yml"),
 			lane:              "release-credential-verification",
 			promotionWorkflow: ".github/workflows/gcp-release-credential-verification-promotion.yml",
+			environment:       "gcp-release-credential-verification-deployment",
 		},
 		{
 			path:              filepath.Join(".github", "workflows", "gcp-hotfix-delivery-promotion.yml"),
 			lane:              "hotfix-delivery",
 			promotionWorkflow: ".github/workflows/gcp-hotfix-delivery-promotion.yml",
+			environment:       "gcp-hotfix-delivery-deployment",
 		},
 		{
 			path:              filepath.Join(".github", "workflows", "gcp-hotfix-propagation-publisher-promotion.yml"),
 			lane:              "hotfix-propagation-publisher",
 			promotionWorkflow: ".github/workflows/gcp-hotfix-propagation-publisher-promotion.yml",
+			environment:       "gcp-hotfix-propagation-publisher-deployment",
 		},
 	} {
 		t.Run(testCase.lane, func(t *testing.T) {
@@ -698,16 +772,129 @@ func TestPromotionWorkflowsWriteLaneBoundPromotionSubjects(t *testing.T) {
 
 			workflow := string(contents)
 			for _, required := range []string{
-				"TARGET_IMAGE: ${{ steps.promotion.outputs.image }}",
-				"TARGET_LANE: " + testCase.lane,
-				"manifest_sha256",
-				"promotion.json",
-				"\"promotion:\" + $target_lane + \":\" + $target_digest",
-				"--arg workflow \"" + testCase.promotionWorkflow + "\"",
-				"promoter_service_account:",
+				"uses: ./.github/actions/record-broker-promotion-evidence",
+				"target-image: ${{ steps.promotion.outputs.image }}",
+				"lane: " + testCase.lane,
+				"workflow: " + testCase.promotionWorkflow,
+				"source-ref: refs/heads/main",
+				"environment: " + testCase.environment,
+				"promoter-service-account: ${{ env.GCP_PROMOTER_SERVICE_ACCOUNT }}",
 			} {
 				if !strings.Contains(workflow, required) {
 					t.Fatalf("promotion workflow is missing %q", required)
+				}
+			}
+			for _, forbidden := range []string{
+				"promotion.json",
+				"manifest_sha256",
+				"schema_version: 1",
+			} {
+				if strings.Contains(workflow, forbidden) {
+					t.Fatalf("promotion workflow retains obsolete %q", forbidden)
+				}
+			}
+		})
+	}
+}
+
+func TestEvidenceGraphSubjectSealerContract(t *testing.T) {
+	sealerPath := filepath.Join("..", "..", ".github", "actions", "seal-evidence-subject", "action.yml")
+	contents, err := os.ReadFile(sealerPath)
+	if err != nil {
+		t.Fatalf("ReadFile(%q) error = %v", sealerPath, err)
+	}
+
+	sealer := string(contents)
+	for _, required := range []string{
+		"sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6",
+		"cosign-release: v3.1.3",
+		"*.subject.payload.json",
+		"jq -cS . \"$payload\"",
+		"cosign sign-blob --yes --bundle \"$bundle\" \"$canonical\"",
+		"canonical_payload_digest",
+		"utf8-json-sorted-keys-v1",
+		"immutable_reference:",
+		"issued_at: $signed_at",
+		"credential-like value",
+		"rm -f \"$canonical\" \"$payload\"",
+	} {
+		if !strings.Contains(sealer, required) {
+			t.Fatalf("evidence-graph subject sealer is missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{
+		"gcloud artifacts generic upload",
+		"gcloud run deploy",
+		"docker build",
+	} {
+		if strings.Contains(sealer, forbidden) {
+			t.Fatalf("evidence-graph subject sealer contains forbidden %q", forbidden)
+		}
+	}
+}
+
+func TestPromotionAndDeploymentEvidenceActionsRemainAppendOnly(t *testing.T) {
+	root := filepath.Join("..", "..")
+	for _, testCase := range []struct {
+		name      string
+		path      string
+		required  []string
+		forbidden []string
+	}{
+		{
+			name: "promotion",
+			path: filepath.Join(".github", "actions", "record-broker-promotion-evidence", "action.yml"),
+			required: []string{
+				"artifact.subject.json",
+				".lifecycle.status == \"verified\"",
+				"promotion-approval.json",
+				"promotion.subject.payload.json",
+				"relation_type: \"promotes\"",
+				"uses: ./.github/actions/seal-evidence-subject",
+				"gcloud artifacts generic upload",
+				"--skip-existing",
+			},
+			forbidden: []string{
+				"docker build",
+				"gcloud run deploy",
+				"latest",
+			},
+		},
+		{
+			name: "deployment",
+			path: filepath.Join(".github", "actions", "record-broker-deployment-evidence", "action.yml"),
+			required: []string{
+				"gcloud run services describe",
+				"gcloud run revisions describe",
+				"deployment-health.json",
+				"deployment-approval.json",
+				"deployment.subject.payload.json",
+				"relation_type: \"deploys\"",
+				"uses: ./.github/actions/seal-evidence-subject",
+				"gcloud artifacts generic upload",
+				"--skip-existing",
+			},
+			forbidden: []string{
+				"docker build",
+				"gcloud run deploy",
+			},
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			contents, err := os.ReadFile(filepath.Join(root, testCase.path))
+			if err != nil {
+				t.Fatalf("ReadFile(%q) error = %v", testCase.path, err)
+			}
+
+			action := string(contents)
+			for _, required := range testCase.required {
+				if !strings.Contains(action, required) {
+					t.Fatalf("%s evidence action is missing %q", testCase.name, required)
+				}
+			}
+			for _, forbidden := range testCase.forbidden {
+				if strings.Contains(action, forbidden) {
+					t.Fatalf("%s evidence action contains forbidden %q", testCase.name, forbidden)
 				}
 			}
 		})

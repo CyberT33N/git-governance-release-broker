@@ -1,0 +1,121 @@
+name: Seal Evidence Graph Subject
+description: Canonicalizes and keylessly signs immutable evidence-graph subject documents.
+
+inputs:
+  directory:
+    description: Directory containing one or more *.subject.payload.json files.
+    required: true
+  issuer:
+    description: Trusted GitHub Actions workflow identity that issues the subject documents.
+    required: true
+  evidence-repository:
+    description: Generic Artifact Registry repository that persists the subject documents.
+    required: true
+  evidence-package:
+    description: Immutable generic artifact package name.
+    required: true
+  evidence-version:
+    description: Immutable generic artifact package version.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Install Cosign
+      uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # cosign-installer v4.1.2
+      with:
+        cosign-release: v3.1.3
+
+    - name: Canonicalize and sign evidence graph subjects
+      shell: bash
+      env:
+        DIRECTORY: ${{ inputs.directory }}
+        ISSUER: ${{ inputs.issuer }}
+        EVIDENCE_REPOSITORY: ${{ inputs.evidence-repository }}
+        EVIDENCE_PACKAGE: ${{ inputs.evidence-package }}
+        EVIDENCE_VERSION: ${{ inputs.evidence-version }}
+      run: |
+        set -euo pipefail
+        test -d "$DIRECTORY"
+        test -n "$ISSUER"
+        test -n "$EVIDENCE_REPOSITORY"
+        test -n "$EVIDENCE_PACKAGE"
+        test -n "$EVIDENCE_VERSION"
+
+        shopt -s nullglob
+        payloads=("$DIRECTORY"/*.subject.payload.json)
+        ((${#payloads[@]} > 0)) || {
+          echo "no evidence-graph subject payloads found" >&2
+          exit 1
+        }
+
+        for payload in "${payloads[@]}"; do
+          jq -e '
+            .schema == "evidence-graph/v1" and
+            (.document | type == "object") and
+            (.document.id | type == "string" and length > 0) and
+            .document.type == "subject" and
+            (.document.issuer | type == "string" and length > 0) and
+            (.document.created_at | type == "string" and length > 0) and
+            (.subject | type == "object") and
+            (.subject.id | type == "string" and length > 0) and
+            (.subject.type | type == "string" and length > 0) and
+            (.subject.primary_digest | type == "string" and length > 0) and
+            (.relations | type == "array") and
+            (.evidence | type == "array") and
+            (.policy | type == "object") and
+            (.lifecycle | type == "object") and
+            (has("integrity") | not)
+          ' "$payload" >/dev/null
+          if jq -e '.. | strings | test("(?i)(authorization:[[:space:]]*bearer|-----begin [a-z ]*private key-----|gh[oprs]_[a-z0-9]+)")' "$payload" >/dev/null; then
+            echo "evidence-graph subject payload contains a credential-like value" >&2
+            exit 1
+          fi
+
+          base="$(basename "$payload" .payload.json)"
+          canonical="$DIRECTORY/.${base}.canonical.json"
+          document="$DIRECTORY/${base}.json"
+          bundle="$DIRECTORY/${base}.integrity.sigstore.json"
+          temporary_document="$DIRECTORY/.${base}.document.json"
+          bundle_file="$(basename "$bundle")"
+
+          jq -cS . "$payload" > "$canonical"
+          payload_sha256="$(sha256sum "$canonical" | awk '{print $1}')"
+          subject_id="$(jq -er '.subject.id' "$payload")"
+          signed_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+          cosign sign-blob --yes --bundle "$bundle" "$canonical"
+          bundle_sha256="$(sha256sum "$bundle" | awk '{print $1}')"
+
+          jq \
+            --arg canonical_payload_digest "sha256:${payload_sha256}" \
+            --arg bundle_digest "sha256:${bundle_sha256}" \
+            --arg issuer "$ISSUER" \
+            --arg subject_id "$subject_id" \
+            --arg evidence_repository "$EVIDENCE_REPOSITORY" \
+            --arg evidence_package "$EVIDENCE_PACKAGE" \
+            --arg evidence_version "$EVIDENCE_VERSION" \
+            --arg bundle_file "$bundle_file" \
+            --arg signed_at "$signed_at" \
+            '. + {
+              integrity: {
+                canonicalization: "utf8-json-sorted-keys-v1",
+                canonical_payload_digest: $canonical_payload_digest,
+                signature: {
+                  evidence_type: "signature",
+                  subject_id: $subject_id,
+                  immutable_reference: {
+                    repository: $evidence_repository,
+                    package: $evidence_package,
+                    version: $evidence_version,
+                    file: $bundle_file
+                  },
+                  digest: $bundle_digest,
+                  issuer: $issuer,
+                  issued_at: $signed_at
+                }
+              }
+            }' "$payload" > "$temporary_document"
+          mv "$temporary_document" "$document"
+          rm -f "$canonical" "$payload"
+        done

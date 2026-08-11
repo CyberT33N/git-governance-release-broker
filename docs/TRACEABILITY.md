@@ -1,19 +1,26 @@
 # Traceability
 
-## GOV-63: Model immutable broker evidence subjects
+## GOV-63: Conform broker evidence subjects to evidence-graph/v1
 
 Status: in implementation.
 
 Scope:
 
 ```text
-Replace the flat staging evidence manifest with a versioned subject graph that
-binds Source, Dependency Resolution, Build, Artifact, Promotion, Deployment,
-and Operation subjects to the immutable OCI digest. Persist a hash-bound
-registry signature payload, require the complete graph before promotion or
-deployment, and require a lane-bound promotion subject before any production
-Cloud Run mutation. Explicitly represent unrecorded lifecycle subjects without
-claiming unprovisioned proxy, deployment, or operations evidence.
+Replace the flat staging manifest with immutable evidence-graph/v1 subject
+documents for Source, Dependency Resolution, Build, Artifact, Promotion,
+Deployment, and Operation. Each materialized subject has a canonical-payload
+digest and a keyless Sigstore signature bundle. Source, dependency, build, and
+artifact relationships are explicitly typed; promotion and deployment create
+new append-only documents instead of rewriting the artifact document.
+
+The staging lane records a complete resolved Go module graph and hermetic
+module verification/test evidence. The artifact remains pending until the
+approved proxy, admission, quality, scan, policy, and approval evidence are
+actually materialized. Promotion and production deployment fail closed unless
+the upstream artifact chain is verified. Deployment evidence is persisted only
+after the deployed Cloud Run revision, immutable digest, and readiness are
+observed.
 ```
 
 ## GOV-62: Bind staging registry authentication to deploy job

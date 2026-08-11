@@ -119,79 +119,18 @@ jobs:
           test "$target_digest" = "$SOURCE_DIGEST"
           echo "image=${registry}/${GCP_PROJECT_ID}/${TARGET_ARTIFACT_REPOSITORY}/broker@${target_digest}" >> "$GITHUB_OUTPUT"
 
-      - name: Store immutable production evidence
-        shell: bash
-        env:
-          SOURCE_DIGEST: ${{ steps.source.outputs.digest }}
-          SOURCE_IMAGE: ${{ steps.source.outputs.reference }}
-          TARGET_IMAGE: ${{ steps.promotion.outputs.image }}
-          TARGET_LANE: hotfix-delivery
-          PROMOTER_SERVICE_ACCOUNT: ${{ env.GCP_PROMOTER_SERVICE_ACCOUNT }}
-        run: |
-          set -euo pipefail
-          evidence_directory="$(mktemp -d)"
-          trap 'rm -rf "$evidence_directory"' EXIT
-          gcloud artifacts generic download \
-            --project="$GCP_PROJECT_ID" \
-            --location="$GCP_REGION" \
-            --repository="$SOURCE_EVIDENCE_ARTIFACT_REPOSITORY" \
-            --package=broker-evidence \
-            --version="${SOURCE_DIGEST#sha256:}" \
-            --destination="$evidence_directory"
-          manifest="$evidence_directory/manifest.json"
-          manifest_sha256="$(sha256sum "$manifest" | awk '{print $1}')"
-          source_commit="$(jq -er '.subjects.source.commit' "$manifest")"
-          source_image="$(jq -er '.subjects.artifact.reference' "$manifest")"
-          source_digest="${SOURCE_IMAGE##*@}"
-          target_digest="${TARGET_IMAGE##*@}"
-          test "$source_image" = "$SOURCE_IMAGE"
-          test "$source_digest" = "$SOURCE_DIGEST"
-          test "$target_digest" = "$SOURCE_DIGEST"
-          jq -n \
-            --arg source_commit "$source_commit" \
-            --arg source_image "$source_image" \
-            --arg source_digest "$source_digest" \
-            --arg manifest_sha256 "$manifest_sha256" \
-            --arg target_image "$TARGET_IMAGE" \
-            --arg target_digest "$target_digest" \
-            --arg target_lane "$TARGET_LANE" \
-            --arg workflow ".github/workflows/gcp-hotfix-delivery-promotion.yml" \
-            --arg workflow_run_id "$GITHUB_RUN_ID" \
-            --arg workflow_run_attempt "$GITHUB_RUN_ATTEMPT" \
-            --arg promoter_service_account "$PROMOTER_SERVICE_ACCOUNT" \
-            '{
-              schema_version: 1,
-              subject: {
-                type: "promotion",
-                id: ("promotion:" + $target_lane + ":" + $target_digest),
-                digest: $target_digest
-              },
-              source: {
-                commit: $source_commit,
-                image: $source_image,
-                digest: $source_digest,
-                manifest_sha256: $manifest_sha256
-              },
-              target: {
-                image: $target_image,
-                digest: $target_digest,
-                lane: $target_lane
-              },
-              authority: {
-                workflow: $workflow,
-                workflow_run_id: $workflow_run_id,
-                workflow_run_attempt: $workflow_run_attempt,
-                promoter_service_account: $promoter_service_account
-              },
-              policy: {
-                approval_status: "environment-gated"
-              }
-            }' > "$evidence_directory/promotion.json"
-          gcloud artifacts generic upload \
-            --project="$GCP_PROJECT_ID" \
-            --location="$GCP_REGION" \
-            --repository="$TARGET_EVIDENCE_ARTIFACT_REPOSITORY" \
-            --package=broker-evidence \
-            --version="${SOURCE_DIGEST#sha256:}" \
-            --source-directory="$evidence_directory" \
-            --skip-existing
+      - name: Record immutable hotfix delivery promotion subject
+        uses: ./.github/actions/record-broker-promotion-evidence
+        with:
+          source-image: ${{ steps.source.outputs.reference }}
+          source-digest: ${{ steps.source.outputs.digest }}
+          target-image: ${{ steps.promotion.outputs.image }}
+          project-id: ${{ env.GCP_PROJECT_ID }}
+          region: ${{ env.GCP_REGION }}
+          source-evidence-repository: ${{ env.SOURCE_EVIDENCE_ARTIFACT_REPOSITORY }}
+          target-evidence-repository: ${{ env.TARGET_EVIDENCE_ARTIFACT_REPOSITORY }}
+          lane: hotfix-delivery
+          workflow: .github/workflows/gcp-hotfix-delivery-promotion.yml
+          source-ref: refs/heads/main
+          environment: gcp-hotfix-delivery-deployment
+          promoter-service-account: ${{ env.GCP_PROMOTER_SERVICE_ACCOUNT }}

@@ -70,12 +70,17 @@ source.
 - Staging and production require distinct WIF, deployer, runtime, invoker,
   Artifact Registry, Cloud Run, Secret Manager, and GitHub Environment
   boundaries.
-- Staging signs and attests immutable image digests, then stores an immutable
-  evidence package. Promotion and deployment re-verify that evidence before
-  production mutation.
-- Lane-specific generic evidence repositories, the approved Go proxy, and the
-  hermetic build image remain external fail-closed prerequisites until
-  provisioned.
+- Staging records an append-only `evidence-graph/v1` chain of signed Source,
+  Dependency Resolution, Build, Artifact, Promotion, Deployment, and Operation
+  subjects. Promotion and deployment re-verify the upstream subject chain
+  before production mutation.
+- Promotion and deployment produce new signed subjects rather than mutating the
+  artifact subject. A deployment subject is stored only after the exact
+  Cloud Run revision and immutable digest are observed.
+- Lane-specific generic evidence repositories, the approved Go proxy,
+  dependency admission, quality/scan/policy evidence, the hermetic build image,
+  and an operation-evidence writer remain external fail-closed prerequisites
+  until provisioned.
 - A GitHub Environment cannot be treated as a production boundary until
   required reviewers, self-review prevention, branch restrictions, and
   administrator-bypass policy are all verified.
