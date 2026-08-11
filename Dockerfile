@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 
-# golang:1.26.5-alpine3.23 (linux/amd64)
-FROM --platform=linux/amd64 golang@sha256:73f9732658b30852522ee5ebe698daa27e1829add9a70ff4f4a828409f8d0a99 AS build
+ARG BUILDER_IMAGE
+FROM --platform=linux/amd64 ${BUILDER_IMAGE} AS build
 
 WORKDIR /src
 

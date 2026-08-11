@@ -1,5 +1,32 @@
 # Traceability
 
+## GOV-71: Verify approved builder evidence before staging consumption
+
+Status: in implementation.
+
+Scope:
+
+```text
+Require the staging consumer to accept only a separately issued, immutable
+internal builder Artifact Subject with a verified lifecycle and policy decision.
+Re-verify its keyless subject integrity, image signature, SBOM, provenance,
+attestation, policy, approval, and revocation evidence before controlled local
+materialization. Bind the builder Subject ID, image digest, canonical payload
+digest, signer identity, and evidence-package reference to the Broker Build
+Subject. Missing or unverifiable builder configuration or evidence fails before
+offline Go work, image publication, evidence upload, or Cloud Run mutation.
+```
+
+External prerequisites:
+
+```text
+- separate internal builder artifact and generic evidence repositories;
+- a builder producer that emits the configured signer repository, workflow,
+  source ref, immutable builder image, and evidence package;
+- Artifact Registry Reader access for the staging deployer only to those
+  builder repositories.
+```
+
 ## GOV-69: Normalize Cloud Run revision evidence
 
 Status: in implementation.

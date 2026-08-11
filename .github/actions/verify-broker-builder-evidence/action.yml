@@ -1,0 +1,61 @@
+name: Verify Broker Builder Evidence
+description: Verifies an approved immutable builder artifact before offline broker consumption.
+
+inputs:
+  image:
+    description: Full immutable internal builder image reference.
+    required: true
+  project-id:
+    description: Google Cloud project that owns the builder artifact and evidence.
+    required: true
+  region:
+    description: Artifact Registry region.
+    required: true
+  artifact-repository:
+    description: Docker repository containing the approved builder image.
+    required: true
+  evidence-repository:
+    description: Generic Artifact Registry repository containing builder evidence.
+    required: true
+  signer-repository:
+    description: Trusted GitHub repository that issues builder evidence.
+    required: true
+  signer-workflow:
+    description: Repository-relative trusted builder signer workflow path.
+    required: true
+  source-ref:
+    description: Trusted Git ref for the builder signer workflow.
+    required: true
+
+outputs:
+  image:
+    description: Verified immutable builder image reference.
+    value: ${{ steps.verify.outputs.image }}
+  subject-id:
+    description: Verified builder artifact subject ID.
+    value: ${{ steps.verify.outputs.subject-id }}
+  canonical-payload-digest:
+    description: Verified canonical payload digest of the builder subject.
+    value: ${{ steps.verify.outputs.canonical-payload-digest }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install Cosign
+      uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # cosign-installer v4.1.2
+      with:
+        cosign-release: v3.1.3
+
+    - id: verify
+      name: Verify immutable builder artifact evidence
+      shell: bash
+      env:
+        BUILDER_IMAGE: ${{ inputs.image }}
+        GCP_PROJECT_ID: ${{ inputs.project-id }}
+        GCP_REGION: ${{ inputs.region }}
+        BUILDER_ARTIFACT_REPOSITORY: ${{ inputs.artifact-repository }}
+        BUILDER_EVIDENCE_ARTIFACT_REPOSITORY: ${{ inputs.evidence-repository }}
+        BUILDER_SIGNER_REPOSITORY: ${{ inputs.signer-repository }}
+        BUILDER_SIGNER_WORKFLOW: ${{ inputs.signer-workflow }}
+        BUILDER_SOURCE_REF: ${{ inputs.source-ref }}
+      run: bash "$GITHUB_ACTION_PATH/verify.sh"

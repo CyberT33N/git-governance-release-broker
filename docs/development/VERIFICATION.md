@@ -46,7 +46,7 @@ platform controls remain intentionally fail-closed until provisioned:
 
 ```text
 approved internal Go proxy
-hermetic pre-provisioned Go 1.26.5 build image
+separately issued and evidence-verified internal Go 1.26.5 builder artifact
 artifact registry for SBOM, provenance, signatures, and attestations
 ```
 

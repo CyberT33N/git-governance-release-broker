@@ -78,10 +78,21 @@ attestation bundles.
 ## Controlled local builder materialization
 
 Before its isolated Go module and test consumer phase, the staging workflow
-explicitly materializes the full builder digest declared by the Dockerfile. It
-pulls that `linux/amd64` digest, verifies the local repository-digest and
-platform binding, and tags the resulting local image under an ephemeral
-digest-derived reference.
+first re-verifies an approved builder Artifact Subject from the configured
+internal builder image and evidence repositories. The builder must have a full
+internal `@sha256:` reference, a `verified` lifecycle and policy decision,
+keyless subject-integrity bundle, image signature, SBOM, provenance,
+attestation, policy, approval, and revocation evidence. The consumer records
+the builder Subject ID, image digest, canonical payload digest, signer
+repository and workflow, source ref, and immutable evidence-package reference
+in its Build Subject.
+
+Only after that re-verification does the staging workflow pull the approved
+`linux/amd64` digest, verify its local repository-digest and platform binding,
+and tag the resulting local image under an ephemeral digest-derived reference.
+The final Docker build receives that same verified builder reference through
+the required `BUILDER_IMAGE` build argument; the Dockerfile contains no direct
+public builder fallback.
 
 All offline Go commands use only that local reference with `--pull=never` and
 `--network=none`; the final staging image build likewise uses
@@ -92,9 +103,11 @@ authority for builder availability or trust.
 
 This local materialization establishes only the exact local image binding
 needed by the isolated consumer. It does not make the builder a verified
-builder artifact: separate builder signature, SBOM, provenance, policy, and
-revocation evidence remain required before any artifact subject can become
-`verified`.
+builder artifact: the separate builder lane must have already issued and
+persisted that evidence. Missing, mismatched, non-internal, pending, revoked,
+quarantined, superseded, or unverifiable builder evidence blocks local
+materialization, tests, image build, image push, evidence upload, and Cloud
+Run mutation fail-closed.
 
 The staging package contains at least:
 
