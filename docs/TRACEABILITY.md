@@ -1,5 +1,19 @@
 # Traceability
 
+## GOV-66: Check Cloud Run v2 deployment readiness
+
+Status: in implementation.
+
+Scope:
+
+```text
+Validate the observed Cloud Run v2 Ready condition through its state field and
+require CONDITION_SUCCEEDED before recording a deployment subject. Persist the
+observed readiness state in deployment-health evidence. Keep missing,
+non-succeeded, and digest-mismatched deployments fail-closed with bounded,
+token-free validation codes.
+```
+
 ## GOV-65: Record digest-bound staging deployment evidence
 
 Status: in implementation.
