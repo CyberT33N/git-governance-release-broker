@@ -104,16 +104,16 @@ runs:
           --region="$GCP_REGION" \
           --format='value(status.latestReadyRevisionName)')"
         test -n "$revision" || fail runtime-revision-missing
-        ready_state="$(gcloud run revisions describe "$revision" \
+        ready_status="$(gcloud run revisions describe "$revision" \
           --project="$GCP_PROJECT_ID" \
           --region="$GCP_REGION" \
-          --format='value(conditions[?type=Ready].state)')"
-        test -n "$ready_state" || fail runtime-revision-condition-missing
-        test "$ready_state" = "CONDITION_SUCCEEDED" || fail runtime-revision-not-ready
+          --format='value(status.conditions[?type="Ready"].status)')"
+        test -n "$ready_status" || fail runtime-revision-condition-missing
+        test "$ready_status" = "True" || fail runtime-revision-not-ready
         deployed_image="$(gcloud run revisions describe "$revision" \
           --project="$GCP_PROJECT_ID" \
           --region="$GCP_REGION" \
-          --format='value(containers[0].image)')"
+          --format='value(spec.containers.image)')"
         test -n "$deployed_image" || fail deployed-image-missing
         deployed_digest="${deployed_image##*@}"
         [[ "$deployed_digest" =~ ^sha256:[0-9a-f]{64}$ ]] || fail deployed-image-not-digest-pinned
@@ -131,7 +131,7 @@ runs:
           --arg revision "$revision" \
           --arg image "$deployed_image" \
           --arg lane "$TARGET_LANE" \
-          --arg ready_state "$ready_state" \
+          --arg ready_status "$ready_status" \
           '{
             schema: "evidence-graph/v1",
             evidence_type: "attestation",
@@ -144,7 +144,7 @@ runs:
               image: $image,
               lane: $lane,
               ready: true,
-              ready_state: $ready_state
+              ready_condition_status: $ready_status
             }
           }' > "$record_directory/deployment-health.json"
         health_sha256="$(sha256sum "$record_directory/deployment-health.json" | awk '{print $1}')"
