@@ -104,17 +104,35 @@ runs:
           --region="$GCP_REGION" \
           --format='value(status.latestReadyRevisionName)')"
         test -n "$revision" || fail runtime-revision-missing
-        ready_status="$(gcloud run revisions describe "$revision" \
+        revision_document="$(gcloud run revisions describe "$revision" \
           --project="$GCP_PROJECT_ID" \
           --region="$GCP_REGION" \
-          --format='value(status.conditions[?type="Ready"].status)')"
-        test -n "$ready_status" || fail runtime-revision-condition-missing
-        test "$ready_status" = "True" || fail runtime-revision-not-ready
-        deployed_image="$(gcloud run revisions describe "$revision" \
-          --project="$GCP_PROJECT_ID" \
-          --region="$GCP_REGION" \
-          --format='value(spec.containers.image)')"
-        test -n "$deployed_image" || fail deployed-image-missing
+          --format=json)"
+        test -n "$revision_document" || fail runtime-revision-document-missing
+        ready_status="$(printf '%s' "$revision_document" | jq -er '
+          [
+            .status.conditions[]?,
+            .conditions[]?
+          ]
+          | map(select(.type == "Ready"))
+          | if length == 1 then .[0] else error("expected exactly one Ready condition") end
+          | .status // .state // empty
+        ')" || fail runtime-revision-condition-missing
+        case "$ready_status" in
+          True|CONDITION_SUCCEEDED)
+            ;;
+          *)
+            fail runtime-revision-not-ready
+            ;;
+        esac
+        deployed_image="$(printf '%s' "$revision_document" | jq -er '
+          [
+            .spec.containers[]?,
+            .containers[]?
+          ]
+          | if length == 1 then .[0] else error("expected exactly one container") end
+          | .image // empty
+        ')" || fail deployed-image-missing
         deployed_digest="${deployed_image##*@}"
         [[ "$deployed_digest" =~ ^sha256:[0-9a-f]{64}$ ]] || fail deployed-image-not-digest-pinned
         test "$deployed_digest" = "$digest" || fail deployed-digest-mismatch

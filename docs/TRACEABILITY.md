@@ -1,17 +1,29 @@
 # Traceability
 
-## GOV-68: Project gcloud revision readiness
+## GOV-69: Normalize Cloud Run revision evidence
 
 Status: in implementation.
 
 Scope:
 
 ```text
-Use the documented gcloud run revisions describe compatibility projection:
-status.conditions[?type="Ready"].status must be True and
-spec.containers.image must contain the immutable deployed image. Persist the
-observed Ready status in deployment-health evidence and reject raw REST-v2
-field paths through same-package workflow contracts.
+Read the Cloud Run revision once as JSON and normalize the CLI-compatible and
+raw-v2 condition and container shapes locally. Require exactly one Ready
+condition with True or CONDITION_SUCCEEDED and exactly one immutable deployed
+image before recording a deployment subject. Do not use a fragile gcloud
+--format list-filter projection for runtime admission.
+```
+
+## GOV-68: Project gcloud revision readiness
+
+Status: superseded by GOV-69.
+
+Scope:
+
+```text
+The documented CLI list-filter projection still produced an empty condition in
+the live staging workflow. GOV-69 replaces single-shape projections with a
+JSON-normalized, fail-closed interpretation.
 ```
 
 ## GOV-67: Project Cloud Run v2 revision evidence
