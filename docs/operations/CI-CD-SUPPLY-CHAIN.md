@@ -75,6 +75,27 @@ graph, hermetic module verification/test result, builder definition and
 toolchain, immutable image digest, SBOM, registry signature, and GitHub
 attestation bundles.
 
+## Controlled local builder materialization
+
+Before its isolated Go module and test consumer phase, the staging workflow
+explicitly materializes the full builder digest declared by the Dockerfile. It
+pulls that `linux/amd64` digest, verifies the local repository-digest and
+platform binding, and tags the resulting local image under an ephemeral
+digest-derived reference.
+
+All offline Go commands use only that local reference with `--pull=never` and
+`--network=none`; the final staging image build likewise uses
+`--pull=false --network=none`. A missing, mismatched, or wrong-platform local
+builder image fails before the final image build, image push, evidence upload,
+or Cloud Run mutation. BuildKit, Docker, runner, and Node caches are not an
+authority for builder availability or trust.
+
+This local materialization establishes only the exact local image binding
+needed by the isolated consumer. It does not make the builder a verified
+builder artifact: separate builder signature, SBOM, provenance, policy, and
+revocation evidence remain required before any artifact subject can become
+`verified`.
+
 The staging package contains at least:
 
 ```text
