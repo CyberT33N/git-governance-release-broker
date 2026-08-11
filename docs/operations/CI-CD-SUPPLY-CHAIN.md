@@ -66,35 +66,53 @@ reviewed source revision
 → protected production deployment
 ```
 
-The staging package is a versioned subject graph rooted at the immutable
-artifact digest. It records the bound Source, Dependency Resolution, Build,
-Artifact, Promotion, Deployment, and Operation subject types. Source through
-Artifact contain the materialized staging evidence: source commit and tree,
-module inputs, builder definition and toolchain, immutable image digest, SBOM,
-registry signature reference, and GitHub attestation bundles.
+The staging package is an `evidence-graph/v1` collection of immutable,
+separately signed subject documents. It records Source, Dependency Resolution,
+Build, Artifact, Promotion, Deployment, and Operation without mutating a
+previous subject document. Source through Artifact contain the materialized
+staging evidence: source commit and tree, the complete resolved Go module
+graph, hermetic module verification/test result, builder definition and
+toolchain, immutable image digest, SBOM, registry signature, and GitHub
+attestation bundles.
 
-The staging package includes `signature.json` in addition to:
+The staging package contains at least:
 
 ```text
-manifest.json
+source.subject.json
+dependency-resolution.subject.json
+dependency-resolution.json
+build.subject.json
+artifact.subject.json
+promotion.not-recorded.subject.json
+operation.not-recorded.subject.json
+<subject>.integrity.sigstore.json
 broker.spdx.json
 signature.json
 provenance.intoto.jsonl
 sbom.intoto.jsonl
+test-result.json
 ```
 
-The staging manifest explicitly marks promotion and deployment as
-`not-recorded` and operations as `not-evaluated`; those values are not positive
-evidence. A main-bound promoter creates a separate, lane-specific
-`promotion.json` subject that binds the verified staging manifest hash, source
-digest, target digest, functional lane, promotion workflow, and promoter
-identity. Production deployment verifies that promotion subject before a Cloud
-Run mutation.
+Each materialized subject stores a canonical payload digest and a keyless
+Sigstore bundle over that payload. Its `relations[]` array binds source to
+dependency resolution, source and dependency resolution to build, and build to
+the final artifact. A phase that has not occurred is explicitly
+`not-recorded`; it never grants promotion, deployment, or runtime admission.
 
-The approved Go proxy, hermetic build image, deployment and operations evidence
-writers, lane-specific generic evidence repositories, and their IAM boundaries
-remain external prerequisites. Until they exist, no workflow may claim a
-completed Supply-Chain-Fortress production delivery.
+A main-bound promoter creates a new lane-specific `promotion.subject.json`
+with its own canonical payload, signature bundle, target digest, environment
+approval evidence, and relation to the verified artifact subject. A deployment
+records a new `deployment.subject.json` only after it observes the exact
+deployed Cloud Run revision, immutable digest, and ready condition. Production
+deployment verifies the full upstream subject chain and verified promotion
+subject before a Cloud Run mutation.
+
+The approved Go proxy, dependency admission, immutable scan and quality
+evidence, hermetic build image, operation-evidence writer, lane-specific
+generic evidence repositories, and their IAM boundaries remain external
+prerequisites. Until they are materialized and re-verified, artifact subjects
+remain `pending`, promotions and production deployments fail closed, and no
+workflow may claim a completed Supply-Chain-Fortress production delivery.
 
 ## Cosign v3 evidence contract
 

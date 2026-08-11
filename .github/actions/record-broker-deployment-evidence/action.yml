@@ -1,0 +1,288 @@
+name: Record Broker Deployment Evidence
+description: Records an immutable, signed evidence-graph deployment subject after a verified Cloud Run deployment.
+
+inputs:
+  image:
+    description: Immutable deployed image reference.
+    required: true
+  project-id:
+    description: Google Cloud project owning the deployed service and evidence repository.
+    required: true
+  region:
+    description: Cloud Run and Artifact Registry region.
+    required: true
+  evidence-repository:
+    description: Generic Artifact Registry repository receiving deployment evidence.
+    required: true
+  service:
+    description: Cloud Run service that received the immutable image.
+    required: true
+  lane:
+    description: Functional lane of the deployment.
+    required: true
+  workflow:
+    description: Repository-relative deployment workflow path.
+    required: true
+  source-ref:
+    description: Trusted Git ref that ran the deployment workflow.
+    required: true
+  environment:
+    description: GitHub environment that approved the deployment workflow.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - id: prepare
+      name: Prepare immutable deployment subject
+      shell: bash
+      env:
+        IMAGE: ${{ inputs.image }}
+        GCP_PROJECT_ID: ${{ inputs.project-id }}
+        GCP_REGION: ${{ inputs.region }}
+        EVIDENCE_ARTIFACT_REPOSITORY: ${{ inputs.evidence-repository }}
+        BROKER_SERVICE: ${{ inputs.service }}
+        TARGET_LANE: ${{ inputs.lane }}
+        DEPLOYMENT_WORKFLOW: ${{ inputs.workflow }}
+        SOURCE_REF: ${{ inputs.source-ref }}
+        GITHUB_ENVIRONMENT: ${{ inputs.environment }}
+      run: |
+        set -euo pipefail
+        digest="${IMAGE##*@}"
+        [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+        test -n "$TARGET_LANE"
+        test -n "$DEPLOYMENT_WORKFLOW"
+        test -n "$SOURCE_REF"
+        test -n "$GITHUB_ENVIRONMENT"
+
+        evidence_version="${digest#sha256:}"
+        evidence_directory="$(mktemp -d)"
+        record_directory="$(mktemp -d)"
+        gcloud artifacts generic download \
+          --project="$GCP_PROJECT_ID" \
+          --location="$GCP_REGION" \
+          --repository="$EVIDENCE_ARTIFACT_REPOSITORY" \
+          --package=broker-evidence \
+          --version="$evidence_version" \
+          --destination="$evidence_directory"
+
+        artifact_subject="$evidence_directory/artifact.subject.json"
+        test -f "$artifact_subject"
+        jq -e \
+          --arg digest "$digest" \
+          '.schema == "evidence-graph/v1" and
+           .subject.type == "artifact" and
+           .subject.primary_digest == $digest and
+           .artifact.digest == $digest' \
+          "$artifact_subject" >/dev/null
+        artifact_subject_id="$(jq -er '.subject.id' "$artifact_subject")"
+        artifact_payload_digest="$(jq -er '.integrity.canonical_payload_digest' "$artifact_subject")"
+
+        parent_subject_id="$artifact_subject_id"
+        if test "$TARGET_LANE" != "staging"; then
+          promotion_subject="$evidence_directory/promotion.subject.json"
+          test -f "$promotion_subject"
+          jq -e \
+            --arg digest "$digest" \
+            --arg lane "$TARGET_LANE" \
+            '.schema == "evidence-graph/v1" and
+             .subject.type == "promotion" and
+             .subject.primary_digest == $digest and
+             .lifecycle.status == "verified" and
+             .lifecycle.target_lane == $lane' \
+            "$promotion_subject" >/dev/null
+          parent_subject_id="$(jq -er '.subject.id' "$promotion_subject")"
+        fi
+
+        revision="$(gcloud run services describe "$BROKER_SERVICE" \
+          --project="$GCP_PROJECT_ID" \
+          --region="$GCP_REGION" \
+          --format='value(status.latestReadyRevisionName)')"
+        test -n "$revision"
+        ready="$(gcloud run revisions describe "$revision" \
+          --project="$GCP_PROJECT_ID" \
+          --region="$GCP_REGION" \
+          --format='value(status.conditions[?type=Ready].status)')"
+        test "$ready" = "True"
+        deployed_image="$(gcloud run revisions describe "$revision" \
+          --project="$GCP_PROJECT_ID" \
+          --region="$GCP_REGION" \
+          --format='value(spec.containers[0].image)')"
+        test "$deployed_image" = "$IMAGE"
+
+        issued_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+        issuer="https://github.com/${GITHUB_REPOSITORY}/${DEPLOYMENT_WORKFLOW}@${SOURCE_REF}"
+        deployment_subject_id="deployment:${TARGET_LANE}:${digest}:${revision}"
+
+        jq -n \
+          --arg issuer "$issuer" \
+          --arg issued_at "$issued_at" \
+          --arg subject_id "$deployment_subject_id" \
+          --arg service "$BROKER_SERVICE" \
+          --arg revision "$revision" \
+          --arg image "$deployed_image" \
+          --arg lane "$TARGET_LANE" \
+          '{
+            schema: "evidence-graph/v1",
+            evidence_type: "attestation",
+            subject_id: $subject_id,
+            issuer: $issuer,
+            issued_at: $issued_at,
+            deployment: {
+              service: $service,
+              revision: $revision,
+              image: $image,
+              lane: $lane,
+              ready: true
+            }
+          }' > "$record_directory/deployment-health.json"
+        health_sha256="$(sha256sum "$record_directory/deployment-health.json" | awk '{print $1}')"
+
+        jq -n \
+          --arg issuer "$issuer" \
+          --arg issued_at "$issued_at" \
+          --arg subject_id "$deployment_subject_id" \
+          --arg environment "$GITHUB_ENVIRONMENT" \
+          --arg workflow "$DEPLOYMENT_WORKFLOW" \
+          --arg workflow_run_id "$GITHUB_RUN_ID" \
+          --arg workflow_run_attempt "$GITHUB_RUN_ATTEMPT" \
+          '{
+            schema: "evidence-graph/v1",
+            evidence_type: "approval",
+            subject_id: $subject_id,
+            issuer: $issuer,
+            issued_at: $issued_at,
+            authorization: {
+              environment: $environment,
+              workflow: $workflow,
+              workflow_run_id: $workflow_run_id,
+              workflow_run_attempt: $workflow_run_attempt,
+              decision: "verified"
+            }
+          }' > "$record_directory/deployment-approval.json"
+        approval_sha256="$(sha256sum "$record_directory/deployment-approval.json" | awk '{print $1}')"
+
+        jq -n \
+          --arg issuer "$issuer" \
+          --arg issued_at "$issued_at" \
+          --arg subject_id "$deployment_subject_id" \
+          --arg digest "$digest" \
+          --arg parent_subject_id "$parent_subject_id" \
+          --arg artifact_subject_id "$artifact_subject_id" \
+          --arg artifact_payload_digest "$artifact_payload_digest" \
+          --arg repository "$EVIDENCE_ARTIFACT_REPOSITORY" \
+          --arg evidence_version "$evidence_version" \
+          --arg lane "$TARGET_LANE" \
+          --arg service "$BROKER_SERVICE" \
+          --arg revision "$revision" \
+          --arg deployed_image "$deployed_image" \
+          --arg workflow "$DEPLOYMENT_WORKFLOW" \
+          --arg workflow_run_id "$GITHUB_RUN_ID" \
+          --arg workflow_run_attempt "$GITHUB_RUN_ATTEMPT" \
+          --arg environment "$GITHUB_ENVIRONMENT" \
+          --arg health_sha256 "sha256:${health_sha256}" \
+          --arg approval_sha256 "sha256:${approval_sha256}" \
+          '{
+            schema: "evidence-graph/v1",
+            document: {
+              id: ("document:" + $subject_id),
+              type: "subject",
+              issuer: $issuer,
+              created_at: $issued_at
+            },
+            subject: {
+              id: $subject_id,
+              type: "deployment",
+              primary_digest: $digest
+            },
+            relations: [
+              {
+                relation_type: "deploys",
+                source_subject_id: $parent_subject_id,
+                target_subject_id: $subject_id
+              }
+            ],
+            evidence: [
+              {
+                evidence_type: "attestation",
+                subject_id: $subject_id,
+                immutable_reference: {
+                  repository: $repository,
+                  package: "broker-evidence",
+                  version: $evidence_version,
+                  file: "deployment-health.json"
+                },
+                digest: $health_sha256,
+                issuer: $issuer,
+                issued_at: $issued_at
+              },
+              {
+                evidence_type: "approval",
+                subject_id: $subject_id,
+                immutable_reference: {
+                  repository: $repository,
+                  package: "broker-evidence",
+                  version: $evidence_version,
+                  file: "deployment-approval.json"
+                },
+                digest: $approval_sha256,
+                issuer: $issuer,
+                issued_at: $issued_at
+              }
+            ],
+            policy: {
+              bundle_id: ("github-environment:" + $environment),
+              decision: "verified",
+              exception: null,
+              approval: {
+                status: "verified",
+                environment: $environment,
+                workflow: $workflow,
+                workflow_run_id: $workflow_run_id,
+                workflow_run_attempt: $workflow_run_attempt
+              }
+            },
+            lifecycle: {
+              status: "verified",
+              target_lane: $lane,
+              phase_references: {
+                artifact_subject_id: $artifact_subject_id,
+                artifact_canonical_payload_digest: $artifact_payload_digest,
+                runtime_revision: $revision,
+                configuration_reference: ("cloud-run:" + $service + ":" + $revision),
+                deployed_image: $deployed_image
+              }
+            }
+          }' > "$record_directory/deployment.subject.payload.json"
+        rm -rf "$evidence_directory"
+        echo "directory=$record_directory" >> "$GITHUB_OUTPUT"
+        echo "issuer=$issuer" >> "$GITHUB_OUTPUT"
+        echo "version=$evidence_version" >> "$GITHUB_OUTPUT"
+
+    - name: Seal immutable deployment subject
+      uses: ./.github/actions/seal-evidence-subject
+      with:
+        directory: ${{ steps.prepare.outputs.directory }}
+        issuer: ${{ steps.prepare.outputs.issuer }}
+        evidence-repository: ${{ inputs.evidence-repository }}
+        evidence-package: broker-evidence
+        evidence-version: ${{ steps.prepare.outputs.version }}
+
+    - name: Store immutable deployment subject
+      shell: bash
+      env:
+        DIRECTORY: ${{ steps.prepare.outputs.directory }}
+        GCP_PROJECT_ID: ${{ inputs.project-id }}
+        GCP_REGION: ${{ inputs.region }}
+        EVIDENCE_ARTIFACT_REPOSITORY: ${{ inputs.evidence-repository }}
+        EVIDENCE_VERSION: ${{ steps.prepare.outputs.version }}
+      run: |
+        set -euo pipefail
+        gcloud artifacts generic upload \
+          --project="$GCP_PROJECT_ID" \
+          --location="$GCP_REGION" \
+          --repository="$EVIDENCE_ARTIFACT_REPOSITORY" \
+          --package=broker-evidence \
+          --version="$EVIDENCE_VERSION" \
+          --source-directory="$DIRECTORY" \
+          --skip-existing

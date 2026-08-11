@@ -356,43 +356,51 @@ GCP_RECONCILIATION_PUBLISHER_EVIDENCE_ARTIFACT_REPOSITORY
 ## Immutable evidence contract
 
 The staging workflow signs the immutable image digest with GitHub OIDC,
-generates SPDX SBOM and provenance attestations, and stores an evidence package
-in a generic Artifact Registry repository. The package version is the
-lower-case image digest without its `sha256:` prefix and contains:
+generates SPDX SBOM and provenance attestations, resolves the Go module graph
+without network access, runs hermetic module verification/tests, and stores an
+`evidence-graph/v1` package in a generic Artifact Registry repository. The
+package version is the lower-case image digest without its `sha256:` prefix.
+
+The package contains independently immutable and keylessly signed Subject
+documents:
 
 ```text
-manifest.json
-broker.spdx.json
-signature.json
-provenance.intoto.jsonl
-sbom.intoto.jsonl
+source.subject.json
+dependency-resolution.subject.json
+build.subject.json
+artifact.subject.json
+promotion.not-recorded.subject.json
+operation.not-recorded.subject.json
+deployment.subject.json after a successful staging deployment
+<subject>.integrity.sigstore.json
 ```
 
-`manifest.json` is schema version 2 and models a subject graph rooted at the
-immutable artifact digest:
+The documents use the canonical `evidence-graph/v1` envelope with a Subject,
+typed `relations[]`, immutable Evidence references, policy/lifecycle state,
+canonical payload digest, and a Sigstore signature bundle over that payload.
+The artifact document is not overwritten when a later lifecycle phase occurs.
 
 ```text
 Source
-Dependency Resolution
-Build
-Artifact
-Promotion
-Deployment
-Operation
+→ resolves → Dependency Resolution
+→ built-from → Build
+→ produces → Artifact
+→ promotes → Promotion
+→ deploys → Deployment
 ```
 
-The staging graph materializes Source through Artifact bindings and marks
-Promotion and Deployment as `not-recorded` plus Operation as `not-evaluated`.
-Those states are explicit absence-of-evidence markers, not successful lifecycle
-claims.
+Promotion and Operation are `not-recorded` until a real corresponding subject
+is created. A main-bound promotion writes a separate
+`promotion.subject.json`, approval evidence, and integrity bundle. A deployer
+writes a separate `deployment.subject.json`, Cloud Run health evidence,
+approval evidence, and integrity bundle only after the exact immutable image
+and ready revision are observed. `not-recorded` and `pending` are absence or
+incompleteness states; they never authorize promotion or deployment.
 
-Promotion verifies the complete staging graph, signature, provenance, and SPDX
-attestation before copying the image digest. It then writes a lane-specific
-`promotion.json` that binds the staging manifest hash, source digest, target
-digest, promotion workflow, promoter identity, and functional target lane into
-the immutable target evidence package. Production deployment requires that
-promotion subject and re-verifies the manifest, payload hashes, staging
-signature, provenance, and SBOM attestation before Cloud Run mutation.
+Promotion verifies the complete source, dependency, build, artifact, evidence,
+and integrity chain before copying an image digest. Production deployment
+requires a separately signed and `verified` lane-bound promotion subject, then
+re-verifies the upstream chain before a Cloud Run mutation.
 
 The evidence IAM model is:
 
@@ -406,9 +414,11 @@ lane promoter
 → no Cloud Run, Secret Manager, or Service Account User permission
 
 lane deployer
-→ Artifact Registry Reader only on its lane Docker and generic evidence repositories
+→ Artifact Registry Reader on its lane Docker and generic evidence repository
 → Artifact Registry Reader on staging Docker for signature and attestation verification
 → Cloud Run deployment and Service Account User only for its lane runtime
+→ Artifact Registry Writer only on its own generic evidence repository to append
+  immutable deployment-subject files; never to staging or another lane
 
 runtime and invoker
 → no Artifact Registry evidence access
@@ -416,8 +426,9 @@ runtime and invoker
 
 ## External Fortress prerequisites
 
-The approved Go proxy, hermetic build image, production image promotion,
-SBOM, provenance, signature, and attestation registry are external platform
-controls. These workflows fail closed on missing environment variables but do
-not claim those controls exist until the corresponding platform resources are
-provisioned and verified.
+The approved Go proxy, dependency admission, immutable scan/quality/policy
+evidence, hermetic build image, production image promotion, SBOM, provenance,
+signature, attestation registry, and operation-evidence writer are external
+platform controls. These workflows fail closed on missing environment variables
+or pending evidence; they do not claim those controls exist until the
+corresponding platform resources are provisioned and verified.

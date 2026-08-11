@@ -131,3 +131,16 @@ jobs:
             --member="serviceAccount:${INVOKER_SERVICE_ACCOUNT}" \
             --role="roles/run.invoker" \
             --quiet
+
+      - name: Record immutable reconciliation deployment subject
+        uses: ./.github/actions/record-broker-deployment-evidence
+        with:
+          image: ${{ env.IMAGE }}
+          project-id: ${{ env.GCP_PROJECT_ID }}
+          region: ${{ env.GCP_REGION }}
+          evidence-repository: ${{ env.EVIDENCE_ARTIFACT_REPOSITORY }}
+          service: ${{ env.BROKER_SERVICE }}
+          lane: reconciliation-publisher
+          workflow: .github/workflows/gcp-reconciliation-publisher-production.yml
+          source-ref: refs/heads/main
+          environment: gcp-reconciliation-publisher-deployment

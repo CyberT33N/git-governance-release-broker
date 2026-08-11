@@ -1,0 +1,264 @@
+name: Record Broker Promotion Evidence
+description: Records an immutable, lane-bound evidence-graph promotion subject after a digest-preserving promotion.
+
+inputs:
+  source-image:
+    description: Immutable staging image reference.
+    required: true
+  source-digest:
+    description: Immutable staging image digest.
+    required: true
+  target-image:
+    description: Immutable promoted image reference.
+    required: true
+  project-id:
+    description: Google Cloud project owning the evidence repositories.
+    required: true
+  region:
+    description: Artifact Registry region.
+    required: true
+  source-evidence-repository:
+    description: Generic Artifact Registry repository containing the verified staging evidence.
+    required: true
+  target-evidence-repository:
+    description: Generic Artifact Registry repository receiving the lane-bound promotion evidence.
+    required: true
+  lane:
+    description: Functional production lane receiving the promoted image.
+    required: true
+  workflow:
+    description: Repository-relative promotion workflow path.
+    required: true
+  source-ref:
+    description: Trusted Git ref that ran the promotion workflow.
+    required: true
+  environment:
+    description: GitHub environment that approved the promotion workflow.
+    required: true
+  promoter-service-account:
+    description: Workload identity that performed the digest-preserving promotion.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - id: prepare
+      name: Prepare immutable promotion subject
+      shell: bash
+      env:
+        SOURCE_IMAGE: ${{ inputs.source-image }}
+        SOURCE_DIGEST: ${{ inputs.source-digest }}
+        TARGET_IMAGE: ${{ inputs.target-image }}
+        GCP_PROJECT_ID: ${{ inputs.project-id }}
+        GCP_REGION: ${{ inputs.region }}
+        SOURCE_EVIDENCE_ARTIFACT_REPOSITORY: ${{ inputs.source-evidence-repository }}
+        TARGET_EVIDENCE_ARTIFACT_REPOSITORY: ${{ inputs.target-evidence-repository }}
+        TARGET_LANE: ${{ inputs.lane }}
+        PROMOTION_WORKFLOW: ${{ inputs.workflow }}
+        SOURCE_REF: ${{ inputs.source-ref }}
+        GITHUB_ENVIRONMENT: ${{ inputs.environment }}
+        PROMOTER_SERVICE_ACCOUNT: ${{ inputs.promoter-service-account }}
+      run: |
+        set -euo pipefail
+        test -n "$SOURCE_IMAGE"
+        test -n "$TARGET_IMAGE"
+        test -n "$TARGET_LANE"
+        test -n "$PROMOTION_WORKFLOW"
+        test -n "$SOURCE_REF"
+        test -n "$GITHUB_ENVIRONMENT"
+        test -n "$PROMOTER_SERVICE_ACCOUNT"
+        [[ "$SOURCE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+        test "${TARGET_IMAGE##*@}" = "$SOURCE_DIGEST"
+
+        evidence_directory="$(mktemp -d)"
+        gcloud artifacts generic download \
+          --project="$GCP_PROJECT_ID" \
+          --location="$GCP_REGION" \
+          --repository="$SOURCE_EVIDENCE_ARTIFACT_REPOSITORY" \
+          --package=broker-evidence \
+          --version="${SOURCE_DIGEST#sha256:}" \
+          --destination="$evidence_directory"
+
+        source_subject="$evidence_directory/source.subject.json"
+        artifact_subject="$evidence_directory/artifact.subject.json"
+        test -f "$source_subject"
+        test -f "$artifact_subject"
+        jq -e \
+          --arg expected_digest "$SOURCE_DIGEST" \
+          --arg source_image "$SOURCE_IMAGE" \
+          '
+          .schema == "evidence-graph/v1" and
+          .subject.type == "artifact" and
+          .subject.primary_digest == $expected_digest and
+          .artifact.reference == $source_image and
+          .artifact.digest == $expected_digest and
+          .lifecycle.status == "verified"
+        ' \
+          "$artifact_subject" >/dev/null
+
+        source_commit="$(jq -er '.source.commit' "$source_subject")"
+        source_subject_id="$(jq -er '.subject.id' "$source_subject")"
+        artifact_subject_id="$(jq -er '.subject.id' "$artifact_subject")"
+        artifact_document_sha256="$(sha256sum "$artifact_subject" | awk '{print $1}')"
+        artifact_payload_digest="$(jq -er '.integrity.canonical_payload_digest' "$artifact_subject")"
+        artifact_issuer="$(jq -er '.document.issuer' "$artifact_subject")"
+        artifact_issued_at="$(jq -er '.document.created_at' "$artifact_subject")"
+        promotion_subject_id="promotion:${TARGET_LANE}:${SOURCE_DIGEST}"
+        issued_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+        issuer="https://github.com/${GITHUB_REPOSITORY}/${PROMOTION_WORKFLOW}@${SOURCE_REF}"
+        evidence_version="${SOURCE_DIGEST#sha256:}"
+
+        jq -n \
+          --arg schema "evidence-graph/v1" \
+          --arg subject_id "$promotion_subject_id" \
+          --arg issuer "$issuer" \
+          --arg issued_at "$issued_at" \
+          --arg environment "$GITHUB_ENVIRONMENT" \
+          --arg workflow "$PROMOTION_WORKFLOW" \
+          --arg workflow_run_id "$GITHUB_RUN_ID" \
+          --arg workflow_run_attempt "$GITHUB_RUN_ATTEMPT" \
+          --arg promoter_service_account "$PROMOTER_SERVICE_ACCOUNT" \
+          '{
+            schema: $schema,
+            evidence_type: "approval",
+            subject_id: $subject_id,
+            issuer: $issuer,
+            issued_at: $issued_at,
+            authorization: {
+              environment: $environment,
+              workflow: $workflow,
+              workflow_run_id: $workflow_run_id,
+              workflow_run_attempt: $workflow_run_attempt,
+              promoter_service_account: $promoter_service_account,
+              decision: "verified"
+            }
+          }' > "$evidence_directory/promotion-approval.json"
+        approval_sha256="$(sha256sum "$evidence_directory/promotion-approval.json" | awk '{print $1}')"
+
+        jq -n \
+          --arg issuer "$issuer" \
+          --arg issued_at "$issued_at" \
+          --arg source_commit "$source_commit" \
+          --arg source_subject_id "$source_subject_id" \
+          --arg artifact_subject_id "$artifact_subject_id" \
+          --arg artifact_document_sha256 "sha256:${artifact_document_sha256}" \
+          --arg artifact_payload_digest "$artifact_payload_digest" \
+          --arg artifact_issuer "$artifact_issuer" \
+          --arg artifact_issued_at "$artifact_issued_at" \
+          --arg source_evidence_repository "$SOURCE_EVIDENCE_ARTIFACT_REPOSITORY" \
+          --arg target_evidence_repository "$TARGET_EVIDENCE_ARTIFACT_REPOSITORY" \
+          --arg evidence_version "$evidence_version" \
+          --arg source_digest "$SOURCE_DIGEST" \
+          --arg target_image "$TARGET_IMAGE" \
+          --arg target_lane "$TARGET_LANE" \
+          --arg workflow "$PROMOTION_WORKFLOW" \
+          --arg workflow_run_id "$GITHUB_RUN_ID" \
+          --arg workflow_run_attempt "$GITHUB_RUN_ATTEMPT" \
+          --arg promoter_service_account "$PROMOTER_SERVICE_ACCOUNT" \
+          --arg environment "$GITHUB_ENVIRONMENT" \
+          --arg approval_sha256 "sha256:${approval_sha256}" \
+          '{
+            schema: "evidence-graph/v1",
+            document: {
+              id: ("document:promotion:" + $target_lane + ":" + $source_digest),
+              type: "subject",
+              issuer: $issuer,
+              created_at: $issued_at
+            },
+            subject: {
+              id: ("promotion:" + $target_lane + ":" + $source_digest),
+              type: "promotion",
+              primary_digest: $source_digest
+            },
+            relations: [
+              {
+                relation_type: "promotes",
+                source_subject_id: $artifact_subject_id,
+                target_subject_id: ("promotion:" + $target_lane + ":" + $source_digest)
+              }
+            ],
+            evidence: [
+              {
+                evidence_type: "provenance",
+                subject_id: ("promotion:" + $target_lane + ":" + $source_digest),
+                immutable_reference: {
+                  repository: $source_evidence_repository,
+                  package: "broker-evidence",
+                  version: $evidence_version,
+                  file: "artifact.subject.json"
+                },
+                digest: $artifact_document_sha256,
+                issuer: $artifact_issuer,
+                issued_at: $artifact_issued_at
+              },
+              {
+                evidence_type: "approval",
+                subject_id: ("promotion:" + $target_lane + ":" + $source_digest),
+                immutable_reference: {
+                  repository: $target_evidence_repository,
+                  package: "broker-evidence",
+                  version: $evidence_version,
+                  file: "promotion-approval.json"
+                },
+                digest: $approval_sha256,
+                issuer: $issuer,
+                issued_at: $issued_at
+              }
+            ],
+            policy: {
+              bundle_id: ("github-environment:" + $environment),
+              decision: "verified",
+              exception: null,
+              approval: {
+                status: "verified",
+                environment: $environment,
+                workflow: $workflow,
+                workflow_run_id: $workflow_run_id,
+                workflow_run_attempt: $workflow_run_attempt,
+                promoter_service_account: $promoter_service_account
+              }
+            },
+            lifecycle: {
+              status: "verified",
+              target_lane: $target_lane,
+              phase_references: {
+                source_commit: $source_commit,
+                source_subject_id: $source_subject_id,
+                source_artifact_subject_id: $artifact_subject_id,
+                source_artifact_canonical_payload_digest: $artifact_payload_digest,
+                source_digest: $source_digest,
+                target_image: $target_image
+              }
+            }
+          }' > "$evidence_directory/promotion.subject.payload.json"
+        echo "directory=$evidence_directory" >> "$GITHUB_OUTPUT"
+        echo "issuer=$issuer" >> "$GITHUB_OUTPUT"
+        echo "version=$evidence_version" >> "$GITHUB_OUTPUT"
+
+    - name: Seal immutable promotion subject
+      uses: ./.github/actions/seal-evidence-subject
+      with:
+        directory: ${{ steps.prepare.outputs.directory }}
+        issuer: ${{ steps.prepare.outputs.issuer }}
+        evidence-repository: ${{ inputs.target-evidence-repository }}
+        evidence-package: broker-evidence
+        evidence-version: ${{ steps.prepare.outputs.version }}
+
+    - name: Store immutable promotion subject
+      shell: bash
+      env:
+        DIRECTORY: ${{ steps.prepare.outputs.directory }}
+        GCP_PROJECT_ID: ${{ inputs.project-id }}
+        GCP_REGION: ${{ inputs.region }}
+        TARGET_EVIDENCE_ARTIFACT_REPOSITORY: ${{ inputs.target-evidence-repository }}
+        EVIDENCE_VERSION: ${{ steps.prepare.outputs.version }}
+      run: |
+        set -euo pipefail
+        gcloud artifacts generic upload \
+          --project="$GCP_PROJECT_ID" \
+          --location="$GCP_REGION" \
+          --repository="$TARGET_EVIDENCE_ARTIFACT_REPOSITORY" \
+          --package=broker-evidence \
+          --version="$EVIDENCE_VERSION" \
+          --source-directory="$DIRECTORY" \
+          --skip-existing
