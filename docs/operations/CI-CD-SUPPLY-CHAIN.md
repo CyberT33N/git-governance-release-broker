@@ -133,6 +133,9 @@ digest. Deployment evidence therefore compares the deployed and approved
 digests, not the original reference string. Its fail-closed guards emit only
 bounded validation codes for missing or invalid evidence, revision readiness,
 and digest mismatch; they never print credentials, headers, or token values.
+For Cloud Run v2, readiness is the `Ready` condition's `state` field and is
+accepted only as `CONDITION_SUCCEEDED`; the legacy `status=True` condition
+shape is not a valid readiness proof.
 
 The approved Go proxy, dependency admission, immutable scan and quality
 evidence, hermetic build image, operation-evidence writer, lane-specific
