@@ -1,5 +1,19 @@
 # Traceability
 
+## GOV-67: Project Cloud Run v2 revision evidence
+
+Status: in implementation.
+
+Scope:
+
+```text
+Read Cloud Run v2 revision conditions and container images from their
+top-level fields. Require the Ready condition's state to be
+CONDITION_SUCCEEDED and bind the top-level immutable deployed image digest
+before recording a deployment subject. Reject legacy status.* and spec.*
+projections through same-package workflow contracts.
+```
+
 ## GOV-66: Check Cloud Run v2 deployment readiness
 
 Status: in implementation.

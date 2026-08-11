@@ -989,8 +989,9 @@ func TestDeploymentEvidenceUsesDigestIdentityAndBoundedFailureCodes(t *testing.T
 		"runtime-revision-condition-missing",
 		"runtime-revision-not-ready",
 		"ready_state=\"$(gcloud run revisions describe \"$revision\"",
-		"--format='value(status.conditions[?type=Ready].state)'",
+		"--format='value(conditions[?type=Ready].state)'",
 		"test \"$ready_state\" = \"CONDITION_SUCCEEDED\" || fail runtime-revision-not-ready",
+		"--format='value(containers[0].image)'",
 		"ready_state: $ready_state",
 		"deployed-image-missing",
 		"deployed-image-not-digest-pinned",
@@ -1008,7 +1009,9 @@ func TestDeploymentEvidenceUsesDigestIdentityAndBoundedFailureCodes(t *testing.T
 		"deployment evidence validation failed: $IMAGE",
 		"deployment evidence validation failed: $deployed_image",
 		"status.conditions[?type=Ready].status",
+		"status.conditions[?type=Ready].state",
 		"test \"$ready\" = \"True\"",
+		"spec.containers[0].image",
 	} {
 		if strings.Contains(action, forbidden) {
 			t.Fatalf("deployment evidence action retains forbidden %q", forbidden)
