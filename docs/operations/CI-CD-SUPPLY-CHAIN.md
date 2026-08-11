@@ -135,7 +135,9 @@ bounded validation codes for missing or invalid evidence, revision readiness,
 and digest mismatch; they never print credentials, headers, or token values.
 For Cloud Run v2, readiness is the `Ready` condition's `state` field and is
 accepted only as `CONDITION_SUCCEEDED`; the legacy `status=True` condition
-shape is not a valid readiness proof.
+shape is not a valid readiness proof. Revision evidence reads the top-level
+`conditions[]` and `containers[]` fields rather than legacy `status.*` or
+`spec.*` projections.
 
 The approved Go proxy, dependency admission, immutable scan and quality
 evidence, hermetic build image, operation-evidence writer, lane-specific
