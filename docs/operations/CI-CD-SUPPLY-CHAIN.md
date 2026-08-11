@@ -128,6 +128,12 @@ deployed Cloud Run revision, immutable digest, and ready condition. Production
 deployment verifies the full upstream subject chain and verified promotion
 subject before a Cloud Run mutation.
 
+Cloud Run may canonicalize an OCI image reference while retaining its immutable
+digest. Deployment evidence therefore compares the deployed and approved
+digests, not the original reference string. Its fail-closed guards emit only
+bounded validation codes for missing or invalid evidence, revision readiness,
+and digest mismatch; they never print credentials, headers, or token values.
+
 The approved Go proxy, dependency admission, immutable scan and quality
 evidence, hermetic build image, operation-evidence writer, lane-specific
 generic evidence repositories, and their IAM boundaries remain external

@@ -48,12 +48,17 @@ runs:
         GITHUB_ENVIRONMENT: ${{ inputs.environment }}
       run: |
         set -euo pipefail
+        fail() {
+          echo "deployment evidence validation failed: $1" >&2
+          exit 1
+        }
+
         digest="${IMAGE##*@}"
-        [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
-        test -n "$TARGET_LANE"
-        test -n "$DEPLOYMENT_WORKFLOW"
-        test -n "$SOURCE_REF"
-        test -n "$GITHUB_ENVIRONMENT"
+        [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || fail input-digest-invalid
+        test -n "$TARGET_LANE" || fail target-lane-missing
+        test -n "$DEPLOYMENT_WORKFLOW" || fail deployment-workflow-missing
+        test -n "$SOURCE_REF" || fail source-ref-missing
+        test -n "$GITHUB_ENVIRONMENT" || fail environment-missing
 
         evidence_version="${digest#sha256:}"
         evidence_directory="$(mktemp -d)"
@@ -67,21 +72,21 @@ runs:
           --destination="$evidence_directory"
 
         artifact_subject="$evidence_directory/artifact.subject.json"
-        test -f "$artifact_subject"
+        test -f "$artifact_subject" || fail artifact-subject-missing
         jq -e \
           --arg digest "$digest" \
           '.schema == "evidence-graph/v1" and
            .subject.type == "artifact" and
            .subject.primary_digest == $digest and
            .artifact.digest == $digest' \
-          "$artifact_subject" >/dev/null
-        artifact_subject_id="$(jq -er '.subject.id' "$artifact_subject")"
-        artifact_payload_digest="$(jq -er '.integrity.canonical_payload_digest' "$artifact_subject")"
+          "$artifact_subject" >/dev/null || fail artifact-subject-invalid
+        artifact_subject_id="$(jq -er '.subject.id' "$artifact_subject")" || fail artifact-subject-id-invalid
+        artifact_payload_digest="$(jq -er '.integrity.canonical_payload_digest' "$artifact_subject")" || fail artifact-integrity-missing
 
         parent_subject_id="$artifact_subject_id"
         if test "$TARGET_LANE" != "staging"; then
           promotion_subject="$evidence_directory/promotion.subject.json"
-          test -f "$promotion_subject"
+          test -f "$promotion_subject" || fail promotion-subject-missing
           jq -e \
             --arg digest "$digest" \
             --arg lane "$TARGET_LANE" \
@@ -90,25 +95,28 @@ runs:
              .subject.primary_digest == $digest and
              .lifecycle.status == "verified" and
              .lifecycle.target_lane == $lane' \
-            "$promotion_subject" >/dev/null
-          parent_subject_id="$(jq -er '.subject.id' "$promotion_subject")"
+            "$promotion_subject" >/dev/null || fail promotion-subject-invalid
+          parent_subject_id="$(jq -er '.subject.id' "$promotion_subject")" || fail promotion-subject-id-invalid
         fi
 
         revision="$(gcloud run services describe "$BROKER_SERVICE" \
           --project="$GCP_PROJECT_ID" \
           --region="$GCP_REGION" \
           --format='value(status.latestReadyRevisionName)')"
-        test -n "$revision"
+        test -n "$revision" || fail runtime-revision-missing
         ready="$(gcloud run revisions describe "$revision" \
           --project="$GCP_PROJECT_ID" \
           --region="$GCP_REGION" \
           --format='value(status.conditions[?type=Ready].status)')"
-        test "$ready" = "True"
+        test "$ready" = "True" || fail runtime-revision-not-ready
         deployed_image="$(gcloud run revisions describe "$revision" \
           --project="$GCP_PROJECT_ID" \
           --region="$GCP_REGION" \
           --format='value(spec.containers[0].image)')"
-        test "$deployed_image" = "$IMAGE"
+        test -n "$deployed_image" || fail deployed-image-missing
+        deployed_digest="${deployed_image##*@}"
+        [[ "$deployed_digest" =~ ^sha256:[0-9a-f]{64}$ ]] || fail deployed-image-not-digest-pinned
+        test "$deployed_digest" = "$digest" || fail deployed-digest-mismatch
 
         issued_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
         issuer="https://github.com/${GITHUB_REPOSITORY}/${DEPLOYMENT_WORKFLOW}@${SOURCE_REF}"
