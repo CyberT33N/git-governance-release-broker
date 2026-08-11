@@ -87,6 +87,9 @@ jobs:
           evidence-repository: ${{ env.EVIDENCE_ARTIFACT_REPOSITORY }}
           signer-workflow: .github/workflows/gcp-broker-staging.yml
           source-ref: refs/heads/develop
+          require-promotion: true
+          promotion-lane: release-automation
+          promotion-workflow: .github/workflows/gcp-broker-production-promotion.yml
 
       - name: Verify immutable production image exists
         shell: bash

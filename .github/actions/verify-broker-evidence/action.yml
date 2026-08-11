@@ -20,6 +20,18 @@ inputs:
   source-ref:
     description: Trusted Git ref for the staging evidence workflow.
     required: true
+  require-promotion:
+    description: Whether the evidence package must contain a verified lane-specific promotion subject.
+    required: false
+    default: "false"
+  promotion-lane:
+    description: Expected functional lane of the promotion subject when promotion is required.
+    required: false
+    default: ""
+  promotion-workflow:
+    description: Expected repository-relative promotion workflow when promotion is required.
+    required: false
+    default: ""
 
 outputs:
   source-image:
@@ -47,11 +59,26 @@ runs:
         EVIDENCE_ARTIFACT_REPOSITORY: ${{ inputs.evidence-repository }}
         SIGNER_WORKFLOW: ${{ inputs.signer-workflow }}
         SOURCE_REF: ${{ inputs.source-ref }}
+        REQUIRE_PROMOTION: ${{ inputs.require-promotion }}
+        PROMOTION_LANE: ${{ inputs.promotion-lane }}
+        PROMOTION_WORKFLOW: ${{ inputs.promotion-workflow }}
       run: |
         set -euo pipefail
         digest="${IMAGE##*@sha256:}"
         test "${#digest}" -eq 64
         test "$digest" = "$(printf '%s' "$digest" | tr -cd '0-9a-f')"
+        case "$REQUIRE_PROMOTION" in
+          true|false)
+            ;;
+          *)
+            echo "require-promotion must be true or false" >&2
+            exit 1
+            ;;
+        esac
+        if test "$REQUIRE_PROMOTION" = "true"; then
+          test -n "$PROMOTION_LANE"
+          test -n "$PROMOTION_WORKFLOW"
+        fi
 
         registry="${GCP_REGION}-docker.pkg.dev"
         evidence_directory="$(mktemp -d)"
@@ -76,35 +103,116 @@ runs:
 
         manifest="$evidence_directory/manifest.json"
         sbom="$evidence_directory/broker.spdx.json"
+        signature="$evidence_directory/signature.json"
         provenance_bundle="$evidence_directory/provenance.intoto.jsonl"
         sbom_bundle="$evidence_directory/sbom.intoto.jsonl"
         test -f "$manifest"
         test -f "$sbom"
+        test -f "$signature"
         test -f "$provenance_bundle"
         test -f "$sbom_bundle"
 
-        source_image="$(jq -er '.source_image' "$manifest")"
-        source_commit="$(jq -er '.source_commit' "$manifest")"
+        source_image="$(jq -er '.subjects.artifact.reference' "$manifest")"
+        source_commit="$(jq -er '.subjects.source.commit' "$manifest")"
         expected_digest="sha256:${digest}"
+        certificate_identity="https://github.com/${GITHUB_REPOSITORY}/${SIGNER_WORKFLOW}@${SOURCE_REF}"
+        source_repository="https://github.com/${GITHUB_REPOSITORY}"
         jq -e \
           --arg expected_digest "$expected_digest" \
           --arg source_image "$source_image" \
           --arg source_commit "$source_commit" \
-          '.schema_version == 1 and
-           .image_digest == $expected_digest and
-           .source_image == $source_image and
-           .source_commit == $source_commit and
-           (.source_image | endswith("@" + $expected_digest)) and
-           (.source_commit | test("^[0-9a-f]{40}$")) and
-           (.sbom_sha256 | test("^[0-9a-f]{64}$")) and
-           (.provenance_bundle_sha256 | test("^[0-9a-f]{64}$")) and
-           (.sbom_bundle_sha256 | test("^[0-9a-f]{64}$"))' \
+          --arg source_repository "$source_repository" \
+          --arg signer_workflow "$SIGNER_WORKFLOW" \
+          --arg source_ref "$SOURCE_REF" \
+          --arg certificate_identity "$certificate_identity" \
+          '.schema_version == 2 and
+           .subject.type == "artifact" and
+           .subject.id == ("oci-image:" + $expected_digest) and
+           .subject.digest == $expected_digest and
+           .subjects.source.type == "source" and
+           .subjects.source.id == ("git-commit:" + $source_commit) and
+           .subjects.source.repository == $source_repository and
+           .subjects.source.commit == $source_commit and
+           (.subjects.source.tree | test("^[0-9a-f]{40}$")) and
+           .subjects.source.ref == $source_ref and
+           .subjects.dependency_resolution.type == "dependency-resolution" and
+           (.subjects.dependency_resolution.go_mod.path == "go.mod") and
+           (.subjects.dependency_resolution.go_mod.sha256 | test("^[0-9a-f]{64}$")) and
+           (.subjects.dependency_resolution.go_sum == null or
+             (.subjects.dependency_resolution.go_sum.path == "go.sum" and
+              (.subjects.dependency_resolution.go_sum.sha256 | test("^[0-9a-f]{64}$")))) and
+           .subjects.dependency_resolution.admission_status == "external-prerequisite-unverified" and
+           .subjects.build.type == "build" and
+           .subjects.build.id == ("broker-build:" + $source_commit) and
+           .subjects.build.workflow == $signer_workflow and
+           (.subjects.build.workflow_run_id | test("^[0-9]+$")) and
+           (.subjects.build.workflow_run_attempt | test("^[0-9]+$")) and
+           (.subjects.build.dockerfile_sha256 | test("^[0-9a-f]{64}$")) and
+           (.subjects.build.builder_image | test("^golang@sha256:[0-9a-f]{64}$")) and
+           (.subjects.build.go_directive | test("^[0-9]+\\.[0-9]+$")) and
+           (.subjects.build.go_toolchain | test("^go[0-9]+\\.[0-9]+\\.[0-9]+$")) and
+           .subjects.artifact.type == "artifact" and
+           .subjects.artifact.id == ("oci-image:" + $expected_digest) and
+           .subjects.artifact.reference == $source_image and
+           .subjects.artifact.digest == $expected_digest and
+           (.subjects.artifact.reference | endswith("@" + $expected_digest)) and
+           .subjects.promotion.type == "promotion" and
+           .subjects.promotion.status == "not-recorded" and
+           .subjects.deployment.type == "deployment" and
+           .subjects.deployment.status == "not-recorded" and
+           .subjects.operation.type == "operation" and
+           .subjects.operation.status == "not-evaluated" and
+           .evidence.sbom.path == "broker.spdx.json" and
+           (.evidence.sbom.sha256 | test("^[0-9a-f]{64}$")) and
+           .evidence.signature.path == "signature.json" and
+           (.evidence.signature.sha256 | test("^[0-9a-f]{64}$")) and
+           .evidence.signature.certificate_identity == $certificate_identity and
+           .evidence.signature.certificate_oidc_issuer == "https://token.actions.githubusercontent.com" and
+           .evidence.provenance.path == "provenance.intoto.jsonl" and
+           (.evidence.provenance.sha256 | test("^[0-9a-f]{64}$")) and
+           .evidence.sbom_attestation.path == "sbom.intoto.jsonl" and
+           (.evidence.sbom_attestation.sha256 | test("^[0-9a-f]{64}$")) and
+           .policy.quality_status == "not-attested" and
+           .policy.approval_status == "environment-gated" and
+           .policy.revocation_status == "not-evaluated" and
+           .policy.retention_status == "not-classified" and
+           .signer_workflow == $signer_workflow and
+           .source_ref == $source_ref' \
           "$manifest" >/dev/null
-        test "$(sha256sum "$sbom" | awk '{print $1}')" = "$(jq -er '.sbom_sha256' "$manifest")"
-        test "$(sha256sum "$provenance_bundle" | awk '{print $1}')" = "$(jq -er '.provenance_bundle_sha256' "$manifest")"
-        test "$(sha256sum "$sbom_bundle" | awk '{print $1}')" = "$(jq -er '.sbom_bundle_sha256' "$manifest")"
+        test "$(sha256sum "$sbom" | awk '{print $1}')" = "$(jq -er '.evidence.sbom.sha256' "$manifest")"
+        test "$(sha256sum "$signature" | awk '{print $1}')" = "$(jq -er '.evidence.signature.sha256' "$manifest")"
+        test "$(sha256sum "$provenance_bundle" | awk '{print $1}')" = "$(jq -er '.evidence.provenance.sha256' "$manifest")"
+        test "$(sha256sum "$sbom_bundle" | awk '{print $1}')" = "$(jq -er '.evidence.sbom_attestation.sha256' "$manifest")"
 
-        certificate_identity="https://github.com/${GITHUB_REPOSITORY}/${SIGNER_WORKFLOW}@${SOURCE_REF}"
+        if test "$REQUIRE_PROMOTION" = "true"; then
+          promotion="$evidence_directory/promotion.json"
+          test -f "$promotion"
+          manifest_sha256="$(sha256sum "$manifest" | awk '{print $1}')"
+          jq -e \
+            --arg expected_digest "$expected_digest" \
+            --arg expected_image "$IMAGE" \
+            --arg source_image "$source_image" \
+            --arg manifest_sha256 "$manifest_sha256" \
+            --arg promotion_lane "$PROMOTION_LANE" \
+            --arg promotion_workflow "$PROMOTION_WORKFLOW" \
+            '.schema_version == 1 and
+             .subject.type == "promotion" and
+             .subject.id == ("promotion:" + $promotion_lane + ":" + $expected_digest) and
+             .subject.digest == $expected_digest and
+             .source.manifest_sha256 == $manifest_sha256 and
+             .source.image == $source_image and
+             .source.digest == $expected_digest and
+             .target.image == $expected_image and
+             .target.digest == $expected_digest and
+             .target.lane == $promotion_lane and
+             .authority.workflow == $promotion_workflow and
+             (.authority.workflow_run_id | test("^[0-9]+$")) and
+             (.authority.workflow_run_attempt | test("^[0-9]+$")) and
+             (.authority.promoter_service_account | test("^[^[:space:]]+@[^[:space:]]+$")) and
+             .policy.approval_status == "environment-gated"' \
+            "$promotion" >/dev/null
+        fi
+
         cosign verify \
           --certificate-identity="$certificate_identity" \
           --certificate-oidc-issuer="https://token.actions.githubusercontent.com" \

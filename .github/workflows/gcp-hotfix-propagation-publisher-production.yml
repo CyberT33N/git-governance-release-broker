@@ -87,6 +87,9 @@ jobs:
           evidence-repository: ${{ env.EVIDENCE_ARTIFACT_REPOSITORY }}
           signer-workflow: .github/workflows/gcp-broker-staging.yml
           source-ref: refs/heads/develop
+          require-promotion: true
+          promotion-lane: hotfix-propagation-publisher
+          promotion-workflow: .github/workflows/gcp-hotfix-propagation-publisher-promotion.yml
 
       - name: Verify immutable hotfix publisher image exists
         shell: bash

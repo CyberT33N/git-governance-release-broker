@@ -66,12 +66,35 @@ reviewed source revision
 → protected production deployment
 ```
 
-The source contract signs and attests a staging digest, then copies an
-immutable evidence package with that digest to each production lane. The
-approved Go proxy, hermetic build image, lane-specific generic evidence
-repositories, and their IAM boundaries remain external prerequisites. Until
-they exist, no workflow may claim a completed Supply-Chain-Fortress production
-delivery.
+The staging package is a versioned subject graph rooted at the immutable
+artifact digest. It records the bound Source, Dependency Resolution, Build,
+Artifact, Promotion, Deployment, and Operation subject types. Source through
+Artifact contain the materialized staging evidence: source commit and tree,
+module inputs, builder definition and toolchain, immutable image digest, SBOM,
+registry signature reference, and GitHub attestation bundles.
+
+The staging package includes `signature.json` in addition to:
+
+```text
+manifest.json
+broker.spdx.json
+signature.json
+provenance.intoto.jsonl
+sbom.intoto.jsonl
+```
+
+The staging manifest explicitly marks promotion and deployment as
+`not-recorded` and operations as `not-evaluated`; those values are not positive
+evidence. A main-bound promoter creates a separate, lane-specific
+`promotion.json` subject that binds the verified staging manifest hash, source
+digest, target digest, functional lane, promotion workflow, and promoter
+identity. Production deployment verifies that promotion subject before a Cloud
+Run mutation.
+
+The approved Go proxy, hermetic build image, deployment and operations evidence
+writers, lane-specific generic evidence repositories, and their IAM boundaries
+remain external prerequisites. Until they exist, no workflow may claim a
+completed Supply-Chain-Fortress production delivery.
 
 ## Cosign v3 evidence contract
 
