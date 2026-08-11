@@ -133,11 +133,11 @@ digest. Deployment evidence therefore compares the deployed and approved
 digests, not the original reference string. Its fail-closed guards emit only
 bounded validation codes for missing or invalid evidence, revision readiness,
 and digest mismatch; they never print credentials, headers, or token values.
-For Cloud Run v2, readiness is the `Ready` condition's `state` field and is
-accepted only as `CONDITION_SUCCEEDED`; the legacy `status=True` condition
-shape is not a valid readiness proof. Revision evidence reads the top-level
-`conditions[]` and `containers[]` fields rather than legacy `status.*` or
-`spec.*` projections.
+The Cloud Run v2 control plane is observed through the documented
+`gcloud run revisions describe` compatibility projection: readiness requires
+`status.conditions[?type="Ready"].status=True`, and the deployed image is read
+from `spec.containers.image`. Raw v2 REST field paths are not interchangeable
+with this CLI projection.
 
 The approved Go proxy, dependency admission, immutable scan and quality
 evidence, hermetic build image, operation-evidence writer, lane-specific

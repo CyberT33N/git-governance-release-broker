@@ -1,31 +1,41 @@
 # Traceability
 
-## GOV-67: Project Cloud Run v2 revision evidence
+## GOV-68: Project gcloud revision readiness
 
 Status: in implementation.
 
 Scope:
 
 ```text
-Read Cloud Run v2 revision conditions and container images from their
-top-level fields. Require the Ready condition's state to be
-CONDITION_SUCCEEDED and bind the top-level immutable deployed image digest
-before recording a deployment subject. Reject legacy status.* and spec.*
-projections through same-package workflow contracts.
+Use the documented gcloud run revisions describe compatibility projection:
+status.conditions[?type="Ready"].status must be True and
+spec.containers.image must contain the immutable deployed image. Persist the
+observed Ready status in deployment-health evidence and reject raw REST-v2
+field paths through same-package workflow contracts.
+```
+
+## GOV-67: Project Cloud Run v2 revision evidence
+
+Status: superseded by GOV-68.
+
+Scope:
+
+```text
+The initial raw Cloud Run v2 REST projection did not match the response model
+of gcloud run revisions describe. GOV-68 replaces it with the documented CLI
+projection without weakening immutable digest binding.
 ```
 
 ## GOV-66: Check Cloud Run v2 deployment readiness
 
-Status: in implementation.
+Status: superseded by GOV-68.
 
 Scope:
 
 ```text
-Validate the observed Cloud Run v2 Ready condition through its state field and
-require CONDITION_SUCCEEDED before recording a deployment subject. Persist the
-observed readiness state in deployment-health evidence. Keep missing,
-non-succeeded, and digest-mismatched deployments fail-closed with bounded,
-token-free validation codes.
+The initial state-based readiness check did not match the gcloud CLI projection.
+GOV-68 retains the fail-closed readiness and digest guards using the documented
+status-based compatibility fields.
 ```
 
 ## GOV-65: Record digest-bound staging deployment evidence
