@@ -1,5 +1,20 @@
 # Traceability
 
+## GOV-65: Record digest-bound staging deployment evidence
+
+Status: in implementation.
+
+Scope:
+
+```text
+Record a deployment subject only after the observed Cloud Run revision is
+ready and its immutable digest matches the approved staging digest. Accept
+provider canonicalization of the OCI reference string without weakening the
+digest binding. Replace silent fail-closed guards with bounded, token-free
+validation codes for artifact-subject, promotion-subject, revision-readiness,
+and deployed-digest failures.
+```
+
 ## GOV-64: Materialize the local broker builder image
 
 Status: in implementation.

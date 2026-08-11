@@ -938,6 +938,8 @@ func TestPromotionAndDeploymentEvidenceActionsRemainAppendOnly(t *testing.T) {
 				"deployment-approval.json",
 				"deployment.subject.payload.json",
 				"relation_type: \"deploys\"",
+				"deployed_digest=\"${deployed_image##*@}\"",
+				"test \"$deployed_digest\" = \"$digest\" || fail deployed-digest-mismatch",
 				"uses: ./.github/actions/seal-evidence-subject",
 				"gcloud artifacts generic upload",
 				"--skip-existing",
@@ -966,5 +968,43 @@ func TestPromotionAndDeploymentEvidenceActionsRemainAppendOnly(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestDeploymentEvidenceUsesDigestIdentityAndBoundedFailureCodes(t *testing.T) {
+	deploymentPath := filepath.Join("..", "..", ".github", "actions", "record-broker-deployment-evidence", "action.yml")
+	contents, err := os.ReadFile(deploymentPath)
+	if err != nil {
+		t.Fatalf("ReadFile(%q) error = %v", deploymentPath, err)
+	}
+
+	action := string(contents)
+	for _, required := range []string{
+		"fail() {",
+		"deployment evidence validation failed: $1",
+		"artifact-subject-missing",
+		"artifact-subject-invalid",
+		"artifact-integrity-missing",
+		"runtime-revision-missing",
+		"runtime-revision-not-ready",
+		"deployed-image-missing",
+		"deployed-image-not-digest-pinned",
+		"deployed-digest-mismatch",
+		"deployed_digest=\"${deployed_image##*@}\"",
+		"[[ \"$deployed_digest\" =~ ^sha256:[0-9a-f]{64}$ ]]",
+		"test \"$deployed_digest\" = \"$digest\" || fail deployed-digest-mismatch",
+	} {
+		if !strings.Contains(action, required) {
+			t.Fatalf("deployment evidence action is missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{
+		"test \"$deployed_image\" = \"$IMAGE\"",
+		"deployment evidence validation failed: $IMAGE",
+		"deployment evidence validation failed: $deployed_image",
+	} {
+		if strings.Contains(action, forbidden) {
+			t.Fatalf("deployment evidence action retains forbidden %q", forbidden)
+		}
 	}
 }
