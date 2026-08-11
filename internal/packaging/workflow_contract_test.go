@@ -986,12 +986,21 @@ func TestDeploymentEvidenceUsesDigestIdentityAndBoundedFailureCodes(t *testing.T
 		"artifact-subject-invalid",
 		"artifact-integrity-missing",
 		"runtime-revision-missing",
+		"runtime-revision-document-missing",
 		"runtime-revision-condition-missing",
 		"runtime-revision-not-ready",
-		"ready_status=\"$(gcloud run revisions describe \"$revision\"",
-		"--format='value(status.conditions[?type=\"Ready\"].status)'",
-		"test \"$ready_status\" = \"True\" || fail runtime-revision-not-ready",
-		"--format='value(spec.containers.image)'",
+		"revision_document=\"$(gcloud run revisions describe \"$revision\"",
+		"--format=json)",
+		"printf '%s' \"$revision_document\" | jq -er",
+		".status.conditions[]?",
+		".conditions[]?",
+		"map(select(.type == \"Ready\"))",
+		"expected exactly one Ready condition",
+		".status // .state // empty",
+		"True|CONDITION_SUCCEEDED)",
+		".spec.containers[]?",
+		".containers[]?",
+		"expected exactly one container",
 		"ready_condition_status: $ready_status",
 		"deployed-image-missing",
 		"deployed-image-not-digest-pinned",
@@ -1011,6 +1020,8 @@ func TestDeploymentEvidenceUsesDigestIdentityAndBoundedFailureCodes(t *testing.T
 		"status.conditions[?type=Ready].status",
 		"status.conditions[?type=Ready].state",
 		"conditions[?type=Ready].state",
+		"status.conditions[?type=\"Ready\"].status",
+		"spec.containers.image",
 		"test \"$ready_state\" = \"CONDITION_SUCCEEDED\"",
 		"spec.containers[0].image",
 		"containers[0].image",
@@ -1018,5 +1029,8 @@ func TestDeploymentEvidenceUsesDigestIdentityAndBoundedFailureCodes(t *testing.T
 		if strings.Contains(action, forbidden) {
 			t.Fatalf("deployment evidence action retains forbidden %q", forbidden)
 		}
+	}
+	if count := strings.Count(action, "gcloud run revisions describe"); count != 1 {
+		t.Fatalf("deployment evidence action invokes gcloud run revisions describe %d times, want 1", count)
 	}
 }
