@@ -58,8 +58,10 @@ func TestWorkflowContracts(t *testing.T) {
 				"--bundle-from-oci",
 				"--deny-self-hosted-runners",
 				"--source-digest",
-				"provenance_bundle_sha256",
-				"sbom_bundle_sha256",
+				".evidence.provenance.sha256",
+				".evidence.sbom_attestation.sha256",
+				".evidence.signature.sha256",
+				"require-promotion:",
 				"gcloud auth print-access-token",
 				"docker login \"$registry\" --username oauth2accesstoken --password-stdin",
 				"docker logout \"$registry\"",
@@ -530,5 +532,184 @@ func TestEvidenceVerifierCallersCreateGoogleCredentialsFiles(t *testing.T) {
 		if !strings.Contains(workflow, "create_credentials_file: true") {
 			t.Fatalf("workflow %q does not provide Google credentials to the evidence verifier", path)
 		}
+	}
+}
+
+func TestStagingEvidenceManifestModelsSubjectGraph(t *testing.T) {
+	stagingPath := filepath.Join("..", "..", ".github", "workflows", "gcp-broker-staging.yml")
+	contents, err := os.ReadFile(stagingPath)
+	if err != nil {
+		t.Fatalf("ReadFile(%q) error = %v", stagingPath, err)
+	}
+
+	workflow := string(contents)
+	for _, required := range []string{
+		"cosign download signature \"$IMAGE\"",
+		"signature.json",
+		"signature_sha256",
+		"source_tree=\"$(git rev-parse \"${GITHUB_SHA}^{tree}\")\"",
+		"go_mod_sha256",
+		"dockerfile_sha256",
+		"go_toolchain",
+		"schema_version: 2",
+		"dependency_resolution:",
+		"admission_status: \"external-prerequisite-unverified\"",
+		"workflow_run_id:",
+		"workflow_run_attempt:",
+		"promotion:",
+		"deployment:",
+		"operation:",
+		"quality_status: \"not-attested\"",
+		"certificate_identity:",
+		"certificate_oidc_issuer:",
+	} {
+		if !strings.Contains(workflow, required) {
+			t.Fatalf("staging evidence manifest is missing %q", required)
+		}
+	}
+}
+
+func TestEvidenceVerifierRequiresCompleteGraphAndPromotionSubject(t *testing.T) {
+	verifierPath := filepath.Join("..", "..", ".github", "actions", "verify-broker-evidence", "action.yml")
+	contents, err := os.ReadFile(verifierPath)
+	if err != nil {
+		t.Fatalf("ReadFile(%q) error = %v", verifierPath, err)
+	}
+
+	verifier := string(contents)
+	for _, required := range []string{
+		"require-promotion:",
+		"promotion-lane:",
+		"promotion-workflow:",
+		"require-promotion must be true or false",
+		"signature=\"$evidence_directory/signature.json\"",
+		".schema_version == 2",
+		".subjects.source",
+		".subjects.dependency_resolution",
+		".subjects.build",
+		".subjects.artifact",
+		".subjects.promotion",
+		".subjects.deployment",
+		".subjects.operation",
+		".evidence.signature.sha256",
+		"promotion=\"$evidence_directory/promotion.json\"",
+		".source.manifest_sha256",
+		".target.lane",
+		".authority.promoter_service_account",
+	} {
+		if !strings.Contains(verifier, required) {
+			t.Fatalf("evidence verifier is missing %q", required)
+		}
+	}
+}
+
+func TestProductionDeploymentsRequireLaneBoundPromotionEvidence(t *testing.T) {
+	root := filepath.Join("..", "..")
+	for _, testCase := range []struct {
+		path              string
+		lane              string
+		promotionWorkflow string
+	}{
+		{
+			path:              filepath.Join(".github", "workflows", "gcp-broker-production.yml"),
+			lane:              "release-automation",
+			promotionWorkflow: ".github/workflows/gcp-broker-production-promotion.yml",
+		},
+		{
+			path:              filepath.Join(".github", "workflows", "gcp-reconciliation-publisher-production.yml"),
+			lane:              "reconciliation-publisher",
+			promotionWorkflow: ".github/workflows/gcp-reconciliation-publisher-promotion.yml",
+		},
+		{
+			path:              filepath.Join(".github", "workflows", "gcp-release-credential-verification-production.yml"),
+			lane:              "release-credential-verification",
+			promotionWorkflow: ".github/workflows/gcp-release-credential-verification-promotion.yml",
+		},
+		{
+			path:              filepath.Join(".github", "workflows", "gcp-hotfix-delivery-production.yml"),
+			lane:              "hotfix-delivery",
+			promotionWorkflow: ".github/workflows/gcp-hotfix-delivery-promotion.yml",
+		},
+		{
+			path:              filepath.Join(".github", "workflows", "gcp-hotfix-propagation-publisher-production.yml"),
+			lane:              "hotfix-propagation-publisher",
+			promotionWorkflow: ".github/workflows/gcp-hotfix-propagation-publisher-promotion.yml",
+		},
+	} {
+		t.Run(testCase.lane, func(t *testing.T) {
+			contents, err := os.ReadFile(filepath.Join(root, testCase.path))
+			if err != nil {
+				t.Fatalf("ReadFile(%q) error = %v", testCase.path, err)
+			}
+
+			workflow := string(contents)
+			for _, required := range []string{
+				"uses: ./.github/actions/verify-broker-evidence",
+				"require-promotion: true",
+				"promotion-lane: " + testCase.lane,
+				"promotion-workflow: " + testCase.promotionWorkflow,
+			} {
+				if !strings.Contains(workflow, required) {
+					t.Fatalf("production workflow is missing %q", required)
+				}
+			}
+		})
+	}
+}
+
+func TestPromotionWorkflowsWriteLaneBoundPromotionSubjects(t *testing.T) {
+	root := filepath.Join("..", "..")
+	for _, testCase := range []struct {
+		path              string
+		lane              string
+		promotionWorkflow string
+	}{
+		{
+			path:              filepath.Join(".github", "workflows", "gcp-broker-production-promotion.yml"),
+			lane:              "release-automation",
+			promotionWorkflow: ".github/workflows/gcp-broker-production-promotion.yml",
+		},
+		{
+			path:              filepath.Join(".github", "workflows", "gcp-reconciliation-publisher-promotion.yml"),
+			lane:              "reconciliation-publisher",
+			promotionWorkflow: ".github/workflows/gcp-reconciliation-publisher-promotion.yml",
+		},
+		{
+			path:              filepath.Join(".github", "workflows", "gcp-release-credential-verification-promotion.yml"),
+			lane:              "release-credential-verification",
+			promotionWorkflow: ".github/workflows/gcp-release-credential-verification-promotion.yml",
+		},
+		{
+			path:              filepath.Join(".github", "workflows", "gcp-hotfix-delivery-promotion.yml"),
+			lane:              "hotfix-delivery",
+			promotionWorkflow: ".github/workflows/gcp-hotfix-delivery-promotion.yml",
+		},
+		{
+			path:              filepath.Join(".github", "workflows", "gcp-hotfix-propagation-publisher-promotion.yml"),
+			lane:              "hotfix-propagation-publisher",
+			promotionWorkflow: ".github/workflows/gcp-hotfix-propagation-publisher-promotion.yml",
+		},
+	} {
+		t.Run(testCase.lane, func(t *testing.T) {
+			contents, err := os.ReadFile(filepath.Join(root, testCase.path))
+			if err != nil {
+				t.Fatalf("ReadFile(%q) error = %v", testCase.path, err)
+			}
+
+			workflow := string(contents)
+			for _, required := range []string{
+				"TARGET_IMAGE: ${{ steps.promotion.outputs.image }}",
+				"TARGET_LANE: " + testCase.lane,
+				"manifest_sha256",
+				"promotion.json",
+				"\"promotion:\" + $target_lane + \":\" + $target_digest",
+				"--arg workflow \"" + testCase.promotionWorkflow + "\"",
+				"promoter_service_account:",
+			} {
+				if !strings.Contains(workflow, required) {
+					t.Fatalf("promotion workflow is missing %q", required)
+				}
+			}
+		})
 	}
 }

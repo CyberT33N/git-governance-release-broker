@@ -363,15 +363,36 @@ lower-case image digest without its `sha256:` prefix and contains:
 ```text
 manifest.json
 broker.spdx.json
+signature.json
 provenance.intoto.jsonl
 sbom.intoto.jsonl
 ```
 
-Promotion verifies the staging signature, provenance, and SPDX attestation
-before copying the image digest. It then copies the immutable evidence package
-to the lane-specific generic evidence repository. Production deployment
-downloads the lane-specific package and re-verifies the manifest, SBOM digest,
-staging signature, provenance, and SBOM attestation before Cloud Run mutation.
+`manifest.json` is schema version 2 and models a subject graph rooted at the
+immutable artifact digest:
+
+```text
+Source
+Dependency Resolution
+Build
+Artifact
+Promotion
+Deployment
+Operation
+```
+
+The staging graph materializes Source through Artifact bindings and marks
+Promotion and Deployment as `not-recorded` plus Operation as `not-evaluated`.
+Those states are explicit absence-of-evidence markers, not successful lifecycle
+claims.
+
+Promotion verifies the complete staging graph, signature, provenance, and SPDX
+attestation before copying the image digest. It then writes a lane-specific
+`promotion.json` that binds the staging manifest hash, source digest, target
+digest, promotion workflow, promoter identity, and functional target lane into
+the immutable target evidence package. Production deployment requires that
+promotion subject and re-verifies the manifest, payload hashes, staging
+signature, provenance, and SBOM attestation before Cloud Run mutation.
 
 The evidence IAM model is:
 

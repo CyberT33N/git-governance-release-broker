@@ -230,26 +230,140 @@ jobs:
           cp .build/evidence/broker.spdx.json "$package_directory/broker.spdx.json"
           cp "$PROVENANCE_BUNDLE" "$package_directory/provenance.intoto.jsonl"
           cp "$SBOM_BUNDLE" "$package_directory/sbom.intoto.jsonl"
+          cosign download signature "$IMAGE" > "$package_directory/signature.json"
+          test -s "$package_directory/signature.json"
           sbom_sha256="$(sha256sum "$package_directory/broker.spdx.json" | awk '{print $1}')"
+          signature_sha256="$(sha256sum "$package_directory/signature.json" | awk '{print $1}')"
           provenance_bundle_sha256="$(sha256sum "$package_directory/provenance.intoto.jsonl" | awk '{print $1}')"
           sbom_bundle_sha256="$(sha256sum "$package_directory/sbom.intoto.jsonl" | awk '{print $1}')"
+          source_tree="$(git rev-parse "${GITHUB_SHA}^{tree}")"
+          go_mod_sha256="$(sha256sum go.mod | awk '{print $1}')"
+          go_sum_sha256=""
+          if test -f go.sum; then
+            go_sum_sha256="$(sha256sum go.sum | awk '{print $1}')"
+          fi
+          dockerfile_sha256="$(sha256sum Dockerfile | awk '{print $1}')"
+          go_directive="$(awk '$1 == "go" { print $2; exit }' go.mod)"
+          go_toolchain="$(awk '$1 == "toolchain" { print $2; exit }' go.mod)"
+          builder_image="$(awk '$1 == "FROM" && $2 == "--platform=linux/amd64" && $3 ~ /^golang@sha256:/ { print $3; exit }' Dockerfile)"
+          test -n "$go_directive"
+          test -n "$go_toolchain"
+          test -n "$builder_image"
           jq -n \
+            --arg repository "$GITHUB_REPOSITORY" \
+            --arg source_repository "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" \
             --arg source_commit "$GITHUB_SHA" \
+            --arg source_tree "$source_tree" \
+            --arg source_ref "refs/heads/develop" \
             --arg source_image "$IMAGE" \
             --arg image_digest "$DIGEST" \
+            --arg go_mod_sha256 "$go_mod_sha256" \
+            --arg go_sum_sha256 "$go_sum_sha256" \
+            --arg dockerfile_sha256 "$dockerfile_sha256" \
+            --arg go_directive "$go_directive" \
+            --arg go_toolchain "$go_toolchain" \
+            --arg builder_image "$builder_image" \
+            --arg workflow ".github/workflows/gcp-broker-staging.yml" \
+            --arg workflow_run_id "$GITHUB_RUN_ID" \
+            --arg workflow_run_attempt "$GITHUB_RUN_ATTEMPT" \
             --arg sbom_sha256 "$sbom_sha256" \
+            --arg signature_sha256 "$signature_sha256" \
             --arg provenance_bundle_sha256 "$provenance_bundle_sha256" \
             --arg sbom_bundle_sha256 "$sbom_bundle_sha256" \
             --arg signer_workflow ".github/workflows/gcp-broker-staging.yml" \
-            --arg source_ref "refs/heads/develop" \
+            --arg certificate_identity "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/gcp-broker-staging.yml@refs/heads/develop" \
+            --arg certificate_oidc_issuer "https://token.actions.githubusercontent.com" \
             '{
-              schema_version: 1,
-              source_commit: $source_commit,
-              source_image: $source_image,
-              image_digest: $image_digest,
-              sbom_sha256: $sbom_sha256,
-              provenance_bundle_sha256: $provenance_bundle_sha256,
-              sbom_bundle_sha256: $sbom_bundle_sha256,
+              schema_version: 2,
+              subject: {
+                type: "artifact",
+                id: ("oci-image:" + $image_digest),
+                digest: $image_digest
+              },
+              subjects: {
+                source: {
+                  type: "source",
+                  id: ("git-commit:" + $source_commit),
+                  repository: $source_repository,
+                  commit: $source_commit,
+                  tree: $source_tree,
+                  ref: $source_ref
+                },
+                dependency_resolution: {
+                  type: "dependency-resolution",
+                  id: ("go-module-input:" + $go_mod_sha256),
+                  go_mod: {
+                    path: "go.mod",
+                    sha256: $go_mod_sha256
+                  },
+                  go_sum: (
+                    if $go_sum_sha256 == "" then
+                      null
+                    else
+                      {
+                        path: "go.sum",
+                        sha256: $go_sum_sha256
+                      }
+                    end
+                  ),
+                  admission_status: "external-prerequisite-unverified"
+                },
+                build: {
+                  type: "build",
+                  id: ("broker-build:" + $source_commit),
+                  workflow: $workflow,
+                  workflow_run_id: $workflow_run_id,
+                  workflow_run_attempt: $workflow_run_attempt,
+                  dockerfile_sha256: $dockerfile_sha256,
+                  builder_image: $builder_image,
+                  go_directive: $go_directive,
+                  go_toolchain: $go_toolchain
+                },
+                artifact: {
+                  type: "artifact",
+                  id: ("oci-image:" + $image_digest),
+                  reference: $source_image,
+                  digest: $image_digest
+                },
+                promotion: {
+                  type: "promotion",
+                  status: "not-recorded"
+                },
+                deployment: {
+                  type: "deployment",
+                  status: "not-recorded"
+                },
+                operation: {
+                  type: "operation",
+                  status: "not-evaluated"
+                }
+              },
+              evidence: {
+                sbom: {
+                  path: "broker.spdx.json",
+                  sha256: $sbom_sha256
+                },
+                signature: {
+                  path: "signature.json",
+                  sha256: $signature_sha256,
+                  certificate_identity: $certificate_identity,
+                  certificate_oidc_issuer: $certificate_oidc_issuer
+                },
+                provenance: {
+                  path: "provenance.intoto.jsonl",
+                  sha256: $provenance_bundle_sha256
+                },
+                sbom_attestation: {
+                  path: "sbom.intoto.jsonl",
+                  sha256: $sbom_bundle_sha256
+                }
+              },
+              policy: {
+                quality_status: "not-attested",
+                approval_status: "environment-gated",
+                revocation_status: "not-evaluated",
+                retention_status: "not-classified"
+              },
               signer_workflow: $signer_workflow,
               source_ref: $source_ref
             }' > "$package_directory/manifest.json"
