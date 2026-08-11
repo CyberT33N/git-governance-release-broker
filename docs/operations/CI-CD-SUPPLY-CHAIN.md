@@ -176,6 +176,270 @@ out and removes that directory through its shell cleanup trap. No long-lived
 credential, private key, or token value is written to the repository, workflow
 output, or GitHub environment variables.
 
+## Read-only staging-evidence audit
+
+This runbook verifies the immutable evidence package from one successful
+`gcp-broker-staging` run. It is deliberately read-only: it downloads an
+already published package, validates its subject graph locally, and verifies
+the keyless subject-integrity bundles. It does not deploy Cloud Run, promote
+an image, upload evidence, change IAM, or print credentials.
+
+Use an identity with Artifact Registry Reader access only to the staging
+evidence repository. The local host needs `gcloud`, `jq`, `sha256sum`, and
+Cosign `v3.1.3`. Supply the full immutable staging image digest from the
+successful workflow run; do not substitute a mutable tag, a prior digest, or a
+failed run.
+
+The following three Bash snippets form one script. Save them in one file and
+run it in a single Bash process with the project ID, region, and full image
+digest. It derives the immutable generic-package version by removing the
+`sha256:` prefix:
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+project_id="${1:?usage: audit-staging-evidence <project-id> <region> <sha256:digest>}"
+region="${2:?usage: audit-staging-evidence <project-id> <region> <sha256:digest>}"
+image_digest="${3:?usage: audit-staging-evidence <project-id> <region> <sha256:digest>}"
+
+if ! [[ "$image_digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+  echo "expected a full lowercase sha256 image digest" >&2
+  exit 1
+fi
+
+evidence_repository="release-broker-staging-evidence"
+evidence_package="broker-evidence"
+evidence_version="${image_digest#sha256:}"
+audit_directory="$(mktemp -d)"
+trap 'rm -rf "$audit_directory"' EXIT
+
+gcloud artifacts generic download \
+  --project="$project_id" \
+  --location="$region" \
+  --repository="$evidence_repository" \
+  --package="$evidence_package" \
+  --version="$evidence_version" \
+  --destination="$audit_directory"
+
+required_files=(
+  artifact.subject.json
+  artifact.subject.integrity.sigstore.json
+  broker.spdx.json
+  build.subject.json
+  build.subject.integrity.sigstore.json
+  dependency-resolution.json
+  dependency-resolution.subject.json
+  dependency-resolution.subject.integrity.sigstore.json
+  deployment-approval.json
+  deployment-health.json
+  deployment.subject.json
+  deployment.subject.integrity.sigstore.json
+  operation.not-recorded.subject.json
+  operation.not-recorded.subject.integrity.sigstore.json
+  promotion.not-recorded.subject.json
+  promotion.not-recorded.subject.integrity.sigstore.json
+  provenance.intoto.jsonl
+  sbom.intoto.jsonl
+  signature.json
+  source.subject.json
+  source.subject.integrity.sigstore.json
+  test-result.json
+)
+
+for required_file in "${required_files[@]}"; do
+  test -f "$audit_directory/$required_file"
+done
+```
+
+The graph check must preserve the lifecycle distinction: the staging deployment
+can be `verified` for the `staging` lane while its artifact remains `pending`
+until all external Fortress prerequisites have been materialized and
+re-verified.
+
+```bash
+source_subject="$audit_directory/source.subject.json"
+dependency_subject="$audit_directory/dependency-resolution.subject.json"
+build_subject="$audit_directory/build.subject.json"
+artifact_subject="$audit_directory/artifact.subject.json"
+deployment_subject="$audit_directory/deployment.subject.json"
+test_result="$audit_directory/test-result.json"
+
+source_subject_id="$(jq -er '.subject.id' "$source_subject")"
+dependency_subject_id="$(jq -er '.subject.id' "$dependency_subject")"
+build_subject_id="$(jq -er '.subject.id' "$build_subject")"
+artifact_subject_id="$(jq -er '.subject.id' "$artifact_subject")"
+deployment_subject_id="$(jq -er '.subject.id' "$deployment_subject")"
+source_commit="$(jq -er '.source.commit' "$source_subject")"
+
+jq -e \
+  --arg source_subject_id "$source_subject_id" \
+  --arg dependency_subject_id "$dependency_subject_id" \
+  '.schema == "evidence-graph/v1" and
+   .document.type == "subject" and
+   .subject.type == "source" and
+   .policy.decision == "verified" and
+   .lifecycle.status == "verified" and
+   ([.relations[] | select(
+     .relation_type == "resolves" and
+     .source_subject_id == $source_subject_id and
+     .target_subject_id == $dependency_subject_id
+   )] | length) == 1' \
+  "$source_subject" >/dev/null
+
+jq -e \
+  --arg source_subject_id "$source_subject_id" \
+  --arg dependency_subject_id "$dependency_subject_id" \
+  --arg build_subject_id "$build_subject_id" \
+  '.schema == "evidence-graph/v1" and
+   .document.type == "subject" and
+   .subject.type == "dependency-resolution" and
+   .dependency_resolution.admission.status == "verified" and
+   .lifecycle.status == "verified" and
+   ([.relations[] | select(
+     .relation_type == "resolves" and
+     .source_subject_id == $source_subject_id and
+     .target_subject_id == $dependency_subject_id
+   )] | length) == 1 and
+   ([.relations[] | select(
+     .relation_type == "built-from" and
+     .source_subject_id == $dependency_subject_id and
+     .target_subject_id == $build_subject_id
+   )] | length) == 1' \
+  "$dependency_subject" >/dev/null
+
+jq -e \
+  --arg source_subject_id "$source_subject_id" \
+  --arg dependency_subject_id "$dependency_subject_id" \
+  --arg build_subject_id "$build_subject_id" \
+  --arg artifact_subject_id "$artifact_subject_id" \
+  '.schema == "evidence-graph/v1" and
+   .document.type == "subject" and
+   .subject.type == "build" and
+   .lifecycle.status == "verified" and
+   ([.relations[] | select(
+     .relation_type == "built-from" and
+     .source_subject_id == $source_subject_id and
+     .target_subject_id == $build_subject_id
+   )] | length) == 1 and
+   ([.relations[] | select(
+     .relation_type == "built-from" and
+     .source_subject_id == $dependency_subject_id and
+     .target_subject_id == $build_subject_id
+   )] | length) == 1 and
+   ([.relations[] | select(
+     .relation_type == "produces" and
+     .source_subject_id == $build_subject_id and
+     .target_subject_id == $artifact_subject_id
+   )] | length) == 1' \
+  "$build_subject" >/dev/null
+
+jq -e \
+  --arg image_digest "$image_digest" \
+  --arg build_subject_id "$build_subject_id" \
+  --arg artifact_subject_id "$artifact_subject_id" \
+  '.schema == "evidence-graph/v1" and
+   .document.type == "subject" and
+   .subject.type == "artifact" and
+   .subject.id == $artifact_subject_id and
+   .subject.primary_digest == $image_digest and
+   .artifact.digest == $image_digest and
+   .lifecycle.status == "pending" and
+   ([.relations[] | select(
+     .relation_type == "produces" and
+     .source_subject_id == $build_subject_id and
+     .target_subject_id == $artifact_subject_id
+   )] | length) == 1' \
+  "$artifact_subject" >/dev/null
+
+jq -e \
+  --arg artifact_subject_id "$artifact_subject_id" \
+  --arg deployment_subject_id "$deployment_subject_id" \
+  '.schema == "evidence-graph/v1" and
+   .document.type == "subject" and
+   .subject.type == "deployment" and
+   .subject.id == $deployment_subject_id and
+   .lifecycle.target_lane == "staging" and
+   .lifecycle.status == "verified" and
+   ([.relations[] | select(
+     .relation_type == "deploys" and
+     .source_subject_id == $artifact_subject_id and
+     .target_subject_id == $deployment_subject_id
+   )] | length) == 1' \
+  "$deployment_subject" >/dev/null
+
+jq -e \
+  --arg source_commit "$source_commit" \
+  '.evidence_type == "test" and
+   .source_commit == $source_commit and
+   .status == "passed"' \
+  "$test_result" >/dev/null
+```
+
+Finally, verify every subject's canonical payload digest, immutable signature
+bundle, and keyless GitHub Actions identity. The loop intentionally checks the
+current staging subjects one by one; a missing subject or bundle is a failure,
+not an incomplete success.
+
+```bash
+certificate_identity="https://github.com/CyberT33N/git-governance-release-broker/.github/workflows/gcp-broker-staging.yml@refs/heads/develop"
+certificate_oidc_issuer="https://token.actions.githubusercontent.com"
+
+subject_files=(
+  source.subject.json
+  dependency-resolution.subject.json
+  build.subject.json
+  artifact.subject.json
+  promotion.not-recorded.subject.json
+  operation.not-recorded.subject.json
+  deployment.subject.json
+)
+
+for subject_file in "${subject_files[@]}"; do
+  subject_path="$audit_directory/$subject_file"
+  subject_id="$(jq -er '.subject.id' "$subject_path")"
+  signature_file="$(jq -er '.integrity.signature.immutable_reference.file' "$subject_path")"
+  signature_path="$audit_directory/$signature_file"
+  canonical_path="$(mktemp)"
+
+  jq 'del(.integrity)' "$subject_path" | jq -cS . > "$canonical_path"
+  canonical_payload_digest="sha256:$(sha256sum "$canonical_path" | awk '{print $1}')"
+  signature_bundle_digest="sha256:$(sha256sum "$signature_path" | awk '{print $1}')"
+
+  jq -e \
+    --arg canonical_payload_digest "$canonical_payload_digest" \
+    --arg signature_bundle_digest "$signature_bundle_digest" \
+    --arg signature_file "$signature_file" \
+    --arg subject_id "$subject_id" \
+    --arg certificate_identity "$certificate_identity" \
+    --arg evidence_version "$evidence_version" \
+    '.integrity.canonicalization == "utf8-json-sorted-keys-v1" and
+     .integrity.canonical_payload_digest == $canonical_payload_digest and
+     .integrity.signature.evidence_type == "signature" and
+     .integrity.signature.subject_id == $subject_id and
+     .integrity.signature.digest == $signature_bundle_digest and
+     .integrity.signature.issuer == $certificate_identity and
+     .integrity.signature.immutable_reference.package == "broker-evidence" and
+     .integrity.signature.immutable_reference.version == $evidence_version and
+     .integrity.signature.immutable_reference.file == $signature_file' \
+    "$subject_path" >/dev/null
+
+  cosign verify-blob "$canonical_path" \
+    --bundle "$signature_path" \
+    --certificate-identity="$certificate_identity" \
+    --certificate-oidc-issuer="$certificate_oidc_issuer" >/dev/null
+
+  rm -f "$canonical_path"
+done
+
+echo "Read-only staging evidence audit passed for $image_digest."
+```
+
+This audit confirms the stored staging package and its recorded staging
+deployment. It does not convert a `pending` artifact to `verified`, authorize
+promotion, authorize a production deployment, or replace the controlled
+promotion and deployment evidence verifier.
+
 ## Superseded pre-delivery candidates
 
 A protected release candidate is not delivered merely because its ref exists.
